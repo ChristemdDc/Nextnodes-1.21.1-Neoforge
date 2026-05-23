@@ -76,6 +76,8 @@ public final class NextNodesPermissions {
         NeoForge.EVENT_BUS.register(this);
         NeoForge.EVENT_BUS.register(new PermissionHandlerEvents(this));
         NeoForge.EVENT_BUS.register(new NextNodesCommands(this));
+
+        NextNodesAPI.setInstance(this);
     }
 
     public PermissionStore store() {
