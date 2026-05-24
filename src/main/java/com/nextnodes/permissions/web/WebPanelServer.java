@@ -52,8 +52,8 @@ public final class WebPanelServer implements AutoCloseable {
 
     private String ip = "localhost";
     private HttpServer server;
-    private String token;
-    private String password;
+    private volatile String token;
+    private volatile String password;
     private volatile long sessionExpiresAt;
     private ScheduledFuture<?> shutdownTask;
     private Runnable onSessionExpired;
@@ -132,14 +132,30 @@ public final class WebPanelServer implements AutoCloseable {
 
     public void setServerIp(String serverIp) {
         if (serverIp == null || serverIp.isBlank() || serverIp.equals("0.0.0.0")) {
-            try {
-                this.ip = java.net.InetAddress.getLocalHost().getHostAddress();
-            } catch (java.net.UnknownHostException e) {
-                this.ip = "localhost";
-            }
+            this.ip = detectNetworkIp();
         } else {
             this.ip = serverIp;
         }
+    }
+
+    private static String detectNetworkIp() {
+        try {
+            java.util.Enumeration<java.net.NetworkInterface> ifaces =
+                    java.net.NetworkInterface.getNetworkInterfaces();
+            if (ifaces != null) {
+                while (ifaces.hasMoreElements()) {
+                    java.net.NetworkInterface iface = ifaces.nextElement();
+                    if (!iface.isUp() || iface.isLoopback() || iface.isVirtual()) continue;
+                    java.util.Enumeration<java.net.InetAddress> addrs = iface.getInetAddresses();
+                    while (addrs.hasMoreElements()) {
+                        java.net.InetAddress addr = addrs.nextElement();
+                        if (addr.isLoopbackAddress() || !(addr instanceof java.net.Inet4Address)) continue;
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return "localhost";
     }
 
     @Override
