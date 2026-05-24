@@ -44,7 +44,6 @@ public final class PermissionModels {
 
     public static final class TabSettings {
         public boolean showPing = true;
-        public boolean showHead = true;
     }
 
     public static final class Rank {

@@ -35,7 +35,7 @@
         ranks: { admin: { name:'admin', displayName:'Admin', prefix:'&c[Admin] ', weight:100, parents:[], permissions:[{node:'command.gamemode',value:true,mode:'literal',contexts:{}},{node:'command.tp',value:true,mode:'literal',contexts:{}}], meta:{gradientStart:'#ff3d8b',gradientMiddle:'#7c4dff',gradientEnd:'#00e5ff'} }, vip: { name:'vip', displayName:'VIP', prefix:'&a[VIP] ', weight:50, parents:['default'], permissions:[{node:'command.fly',value:true,mode:'literal',contexts:{}}], meta:{gradientStart:'#00e676',gradientMiddle:'#00e5ff',gradientEnd:'#7c4dff'} }, default: { name:'default', displayName:'Jugador', prefix:'&7[Jugador] ', weight:0, parents:[], permissions:[], meta:{} } },
         commands: [ {name:'gamemode',permissionNode:'command.gamemode',source:'Minecraft Vanilla',paths:['gamemode survival','gamemode creative']}, {name:'tp',permissionNode:'command.tp',source:'Minecraft Vanilla',paths:['tp','teleport']}, {name:'fly',permissionNode:'command.fly',source:'Essentials',paths:['fly']}, {name:'heal',permissionNode:'command.heal',source:'Essentials',paths:['heal']}, {name:'give',permissionNode:'command.give',source:'Minecraft Vanilla',paths:['give']}, {name:'kick',permissionNode:'command.kick',source:'Minecraft Vanilla',paths:['kick']}, {name:'ban',permissionNode:'command.ban',source:'Minecraft Vanilla',paths:['ban']}, {name:'home',permissionNode:'command.home',source:'Essentials',paths:['home','sethome']} ],
         defaultRank: 'default',
-        tabSettings: { showPing: true, showHead: true }
+        tabSettings: { showPing: true }
       };
       render(); setStatus('Demo (sin servidor)');
     }
@@ -113,15 +113,14 @@
         <div class="panel"><div class="panelHead"><h2>Lista TAB del juego</h2><span class="muted">Opciones de visualización en el TAB de Minecraft</span></div>
           <div class="list">
             <div class="listItem"><span class="navIcon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 6s4-4 11-4 11 4 11 4-4 4-11 4-11-4-11-4z"/><circle cx="12" cy="6" r="2"/></svg></span><div><b>Mostrar ping en el TAB</b><div class="muted">Muestra el ping del jugador como texto de color junto a su nombre (ej: §a34ms)</div></div><label class="miniCheck" style="margin:0"><input type="checkbox" id="tabShowPing" ${(state.tabSettings||{}).showPing !== false ? 'checked' : ''} onchange="saveTabSettings()"><span style="font-size:13px">Activo</span></label></div>
-            <div class="listItem"><span class="navIcon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></span><div><b>Mostrar jugadores en lista TAB</b><div class="muted">Si se desactiva, los jugadores no aparecen en la lista TAB (útil con TAB personalizado por cliente)</div></div><label class="miniCheck" style="margin:0"><input type="checkbox" id="tabShowHead" ${(state.tabSettings||{}).showHead !== false ? 'checked' : ''} onchange="saveTabSettings()"><span style="font-size:13px">Activo</span></label></div>
+
           </div>
         </div>`;
     }
     async function saveTabSettings() {
       const showPing = document.getElementById('tabShowPing')?.checked ?? true;
-      const showHead = document.getElementById('tabShowHead')?.checked ?? true;
       try {
-        await api('/api/settings/tab', { method: 'PUT', body: { showPing, showHead } });
+        await api('/api/settings/tab', { method: 'PUT', body: { showPing } });
         toast('Configuración del TAB guardada');
       } catch(e) { toast('Error: ' + e.message); }
     }

@@ -336,7 +336,7 @@ public final class WebPanelServer implements AutoCloseable {
                 PermissionModels.TabSettings ts = GSON.fromJson(readBody(exchange), PermissionModels.TabSettings.class);
                 if (ts == null) { sendJson(exchange, 400, error("JSON inválido")); return; }
                 this.store.saveTabSettings(ts);
-                if (this.auditLog != null) this.auditLog.log("web-panel", "web-panel", "tabsettings.save", "", "", "showPing=" + ts.showPing + " showHead=" + ts.showHead);
+                if (this.auditLog != null) this.auditLog.log("web-panel", "web-panel", "tabsettings.save", "", "", "showPing=" + ts.showPing);
                 sendJson(exchange, 200, ok());
                 return;
             }

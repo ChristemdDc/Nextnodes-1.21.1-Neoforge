@@ -16,9 +16,12 @@ import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.synchronization.SuggestionProviders;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.numbers.FixedFormat;
+import net.minecraft.network.protocol.common.ClientboundResourcePackPushPacket;
 import net.minecraft.network.protocol.game.ClientboundCommandsPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.GameType;
@@ -41,12 +44,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -62,6 +68,10 @@ public final class NextNodesPermissions {
 
     private static final Set<String> HIDDEN_COMMANDS = Set.of();
     private static final String PING_OBJECTIVE = "nn_ping";
+    /** Font ResourceLocation for the player-head glyph custom font. */
+    private static final ResourceLocation HEADS_FONT = ResourceLocation.fromNamespaceAndPath("nextnodes", "heads");
+    /** Fixed UUID that identifies our resource pack (same ID → client replaces existing pack). */
+    private static final UUID RESOURCE_PACK_UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
     private static final ExecutorService DB_EXECUTOR = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "nextnodes-db");
         t.setDaemon(true);
@@ -73,11 +83,14 @@ public final class NextNodesPermissions {
     private final CommandCatalog commandCatalog;
     private final AuditLog auditLog;
     private final RankHistoryLog rankHistoryLog;
+    /** Manages per-player head glyphs and the dynamic resource pack. */
+    private final PlayerHeadFont headFont = new PlayerHeadFont();
     /** Tracks each online player's primaryRank to detect changes and notify them. */
     private final Map<UUID, String> prevPrimaryRanks = new ConcurrentHashMap<>();
     private MinecraftServer server;
     private WebPanelServer webPanel;
     private ScheduledExecutorService pingScheduler;
+    private com.sun.net.httpserver.HttpServer resourcePackHttpServer;
 
     public NextNodesPermissions() {
         if (FMLEnvironment.dist == Dist.CLIENT) {
@@ -100,7 +113,6 @@ public final class NextNodesPermissions {
         this.store.addChangeListener(this::refreshOnlinePlayers);
         this.store.addOnlineChangeListener(this::refreshOnlinePlayerNames);
         this.store.addUserSavedListener(this::onUserSaved);
-        this.store.addTabSettingsListener(this::applyTabListing);
         this.store.addTabSettingsListener(this::tickPingScoreboard);
         this.pingScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "nextnodes-ping");
@@ -185,6 +197,37 @@ public final class NextNodesPermissions {
         this.webPanel.setOnSessionExpired(() -> {
             LOGGER.info("NextNodes Permissions web panel session expired");
         });
+
+        // Start lightweight HTTP server just for the resource-pack download
+        // (does not require the web panel to be logged in)
+        int rpPort = Integer.getInteger("nextnodes.rp.port", 25901);
+        try {
+            this.resourcePackHttpServer = com.sun.net.httpserver.HttpServer.create(
+                    new InetSocketAddress(rpPort), 0);
+            this.resourcePackHttpServer.createContext("/resource-pack.zip", exchange -> {
+                byte[] pack = this.headFont.packBytes();
+                if (pack == null) {
+                    exchange.sendResponseHeaders(503, -1);
+                    exchange.close();
+                    return;
+                }
+                exchange.getResponseHeaders().set("Content-Type", "application/zip");
+                exchange.sendResponseHeaders(200, pack.length);
+                try (OutputStream os = exchange.getResponseBody()) {
+                    os.write(pack);
+                }
+                exchange.close();
+            });
+            this.resourcePackHttpServer.setExecutor(Executors.newFixedThreadPool(2, r -> {
+                Thread t = new Thread(r, "nextnodes-rp");
+                t.setDaemon(true);
+                return t;
+            }));
+            this.resourcePackHttpServer.start();
+            LOGGER.info("NextNodes resource-pack server listening on port {}", rpPort);
+        } catch (IOException e) {
+            LOGGER.warn("Could not start resource-pack HTTP server on port {}: {}", rpPort, e.getMessage());
+        }
     }
 
     @net.neoforged.bus.api.SubscribeEvent
@@ -202,6 +245,10 @@ public final class NextNodesPermissions {
                 sb.removeObjective(obj);
             }
         }
+        if (this.resourcePackHttpServer != null) {
+            this.resourcePackHttpServer.stop(0);
+            this.resourcePackHttpServer = null;
+        }
         if (this.webPanel != null) {
             this.webPanel.close();
             this.webPanel = null;
@@ -214,6 +261,8 @@ public final class NextNodesPermissions {
     public void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
         UUID uuid = event.getEntity().getUUID();
         String name = event.getEntity().getGameProfile().getName();
+        // Capture the profile reference before going off-thread
+        com.mojang.authlib.GameProfile profile = event.getEntity().getGameProfile();
         MinecraftServer currentServer = this.server;
         DB_EXECUTOR.execute(() -> {
             try {
@@ -221,14 +270,49 @@ public final class NextNodesPermissions {
             } catch (IOException ex) {
                 LOGGER.error("Unable to update player permission profile", ex);
             }
+
+            // Fetch skin and add to the resource pack if this player is new.
+            // On offline-mode/proxy servers the GameProfile may lack textures;
+            // we ask Mojang's session server to fill them in.
+            boolean packChanged = false;
+            if (!this.headFont.hasFace(uuid)) {
+                com.mojang.authlib.GameProfile fullProfile = profile;
+                if (currentServer != null && !profile.getProperties().containsKey("textures")) {
+                    try {
+                        com.mojang.authlib.yggdrasil.ProfileResult result =
+                                currentServer.getSessionService().fetchProfile(uuid, false);
+                        if (result != null) {
+                            fullProfile = result.profile();
+                        }
+                    } catch (Exception e) {
+                        LOGGER.warn("Could not fetch Mojang profile for {}: {}", name, e.getMessage());
+                    }
+                }
+                final com.mojang.authlib.GameProfile fetchedProfile = fullProfile;
+                // Inject fetched skin into the player's live GameProfile on server thread
+                if (fetchedProfile != profile) {
+                    if (currentServer != null) {
+                        currentServer.execute(() -> {
+                            ServerPlayer p = currentServer.getPlayerList().getPlayer(uuid);
+                            if (p != null) p.getGameProfile().getProperties().putAll(fetchedProfile.getProperties());
+                        });
+                    }
+                }
+                packChanged = this.headFont.updateFaceFromProfile(uuid, fetchedProfile);
+            }
+
+            final boolean newFaceAdded = packChanged;
             if (currentServer != null) {
                 currentServer.execute(() -> {
                     ServerPlayer player = currentServer.getPlayerList().getPlayer(uuid);
                     if (player != null) {
                         refreshPlayer(player);
-                        // Apply tab listing state for the newly joined player
-                        if (!this.store.getTabSettings().showHead) {
-                            applyTabListing();
+                        if (newFaceAdded) {
+                            // New face added → resend the pack to ALL connected players
+                            sendResourcePackToAll(currentServer);
+                        } else {
+                            // Returning player → send the current pack just to them
+                            sendResourcePackToPlayer(player);
                         }
                     }
                 });
@@ -264,10 +348,23 @@ public final class NextNodesPermissions {
     @net.neoforged.bus.api.SubscribeEvent
     public void onTabListName(PlayerEvent.TabListNameFormat event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            Component name = PrefixFormatter.prefixedName(
-                    this.resolver.resolvePrefix(player.getUUID()),
-                    Component.literal(player.getGameProfile().getName()));
-            event.setDisplayName(name);
+            UUID uuid = player.getUUID();
+            Component prefixComp = PrefixFormatter.format(this.resolver.resolvePrefix(uuid));
+            Component nameComp = Component.literal(player.getGameProfile().getName())
+                    .withStyle(ChatFormatting.RESET);
+
+            MutableComponent result = Component.empty();
+            if (!prefixComp.getString().isBlank()) {
+                result.append(prefixComp);
+            }
+            // Append head glyph between prefix and name if the face has been fetched
+            if (this.headFont.hasFace(uuid)) {
+                char headChar = this.headFont.getOrAssignChar(uuid);
+                result.append(Component.literal(String.valueOf(headChar))
+                        .withStyle(s -> s.withFont(HEADS_FONT)));
+            }
+            result.append(nameComp);
+            event.setDisplayName(result);
         }
     }
 
@@ -429,46 +526,35 @@ public final class NextNodesPermissions {
         currentServer.execute(() -> currentServer.getPlayerList().getPlayers().forEach(this::refreshPlayerName));
     }
 
-    /**
-     * Broadcasts UPDATE_LISTED packets to all connected clients to show/hide
-     * players in the vanilla TAB list according to the showHead setting.
-     * When listed=false, builds entries via reflection since there is no public
-     * ClientboundPlayerInfoUpdatePacket(EnumSet, List<Entry>) constructor.
-     */
-    private void applyTabListing() {
-        MinecraftServer currentServer = this.server;
-        if (currentServer == null) return;
-        currentServer.execute(() -> {
-            boolean listed = this.store.getTabSettings().showHead;
-            List<ServerPlayer> players = new ArrayList<>(currentServer.getPlayerList().getPlayers());
-            if (players.isEmpty()) return;
-            ClientboundPlayerInfoUpdatePacket packet = buildListedPacket(players, listed);
-            for (ServerPlayer viewer : players) {
-                if (viewer.connection != null) viewer.connection.send(packet);
-            }
-        });
+    // ── Resource-pack helpers ────────────────────────────────────────────────
+
+    private void sendResourcePackToPlayer(ServerPlayer player) {
+        String url = resourcePackUrl();
+        String sha1 = this.headFont.packSha1();
+        if (url == null || sha1.isEmpty() || this.headFont.packBytes() == null) return;
+        if (player.connection == null) return;
+        player.connection.send(new ClientboundResourcePackPushPacket(
+                RESOURCE_PACK_UUID, url, sha1, false, Optional.empty()));
     }
 
-    private static ClientboundPlayerInfoUpdatePacket buildListedPacket(List<ServerPlayer> players, boolean listed) {
-        ClientboundPlayerInfoUpdatePacket packet = new ClientboundPlayerInfoUpdatePacket(
-                EnumSet.of(ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LISTED), players);
-        if (listed) {
-            return packet; // default from constructor is listed=true
+    private void sendResourcePackToAll(MinecraftServer srv) {
+        String url = resourcePackUrl();
+        String sha1 = this.headFont.packSha1();
+        if (url == null || sha1.isEmpty() || this.headFont.packBytes() == null) return;
+        ClientboundResourcePackPushPacket packet = new ClientboundResourcePackPushPacket(
+                RESOURCE_PACK_UUID, url, sha1, false, Optional.empty());
+        for (ServerPlayer player : srv.getPlayerList().getPlayers()) {
+            if (player.connection != null) player.connection.send(packet);
         }
-        // For listed=false: use reflection to replace entries, since the only
-        // available constructors always read listed=true from ServerPlayer.
-        try {
-            List<ClientboundPlayerInfoUpdatePacket.Entry> entries = players.stream()
-                    .map(p -> new ClientboundPlayerInfoUpdatePacket.Entry(
-                            p.getUUID(), null, false, 0, GameType.SURVIVAL, null, null))
-                    .collect(java.util.stream.Collectors.toList());
-            java.lang.reflect.Field f = ClientboundPlayerInfoUpdatePacket.class.getDeclaredField("entries");
-            f.setAccessible(true);
-            f.set(packet, entries);
-        } catch (ReflectiveOperationException e) {
-            LOGGER.warn("Could not apply listed=false for tab packet via reflection", e);
-        }
-        return packet;
+    }
+
+    private String resourcePackUrl() {
+        if (this.resourcePackHttpServer == null) return null;
+        String host = System.getProperty("nextnodes.rp.host",
+                (this.server != null ? this.server.getLocalIp() : null));
+        if (host == null || host.isBlank()) return null;
+        int port = Integer.getInteger("nextnodes.rp.port", 25901);
+        return "http://" + host + ":" + port + "/resource-pack.zip";
     }
 
     private void refreshPlayer(ServerPlayer player) {
