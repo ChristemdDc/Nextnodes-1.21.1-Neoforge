@@ -37,8 +37,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Mod(NextNodesPermissions.MOD_ID)
 public final class NextNodesPermissions {
@@ -46,6 +47,11 @@ public final class NextNodesPermissions {
     private static final Logger LOGGER = LoggerFactory.getLogger(NextNodesPermissions.class);
 
     private static final Set<String> HIDDEN_COMMANDS = Set.of();
+    private static final ExecutorService DB_EXECUTOR = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "nextnodes-db");
+        t.setDaemon(true);
+        return t;
+    });
 
     private final PermissionStore store;
     private final PermissionResolver resolver;
@@ -172,13 +178,12 @@ public final class NextNodesPermissions {
         UUID uuid = event.getEntity().getUUID();
         String name = event.getEntity().getGameProfile().getName();
         MinecraftServer currentServer = this.server;
-        CompletableFuture.runAsync(() -> {
+        DB_EXECUTOR.execute(() -> {
             try {
                 this.store.touchPlayer(uuid, name, true);
             } catch (IOException ex) {
                 LOGGER.error("Unable to update player permission profile", ex);
             }
-        }).thenRun(() -> {
             if (currentServer != null) {
                 currentServer.execute(() -> {
                     ServerPlayer player = currentServer.getPlayerList().getPlayer(uuid);
@@ -192,7 +197,7 @@ public final class NextNodesPermissions {
     public void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
         UUID uuid = event.getEntity().getUUID();
         this.prevPrimaryRanks.remove(uuid);
-        CompletableFuture.runAsync(() -> {
+        DB_EXECUTOR.execute(() -> {
             try {
                 this.store.setOnline(uuid, false);
             } catch (IOException ex) {
@@ -286,20 +291,23 @@ public final class NextNodesPermissions {
      * Notifies the online player if their primaryRank changed.
      */
     private void onUserSaved(PermissionModels.UserEntry user) {
-        if (this.server == null) return;
-        try {
-            UUID uuid = UUID.fromString(user.uuid);
-            ServerPlayer player = this.server.getPlayerList().getPlayer(uuid);
-            // prevPrimaryRanks.put returns the OLD value (or null on first registration)
-            String prev = this.prevPrimaryRanks.put(uuid, user.primaryRank);
-            if (player != null && prev != null && !prev.equals(user.primaryRank)) {
-                PermissionModels.PermissionData snap = this.store.snapshot();
-                PermissionModels.Rank rank = snap.ranks.get(user.primaryRank);
-                String displayName = (rank != null && !rank.displayName.isBlank()) ? rank.displayName : user.primaryRank;
-                player.sendSystemMessage(Component.literal(
-                        "§6[NextNodes] §aTu rango ha cambiado a: §f" + displayName));
-            }
-        } catch (Exception ignored) {}
+        MinecraftServer currentServer = this.server;
+        if (currentServer == null) return;
+        currentServer.execute(() -> {
+            try {
+                UUID uuid = UUID.fromString(user.uuid);
+                ServerPlayer player = currentServer.getPlayerList().getPlayer(uuid);
+                // prevPrimaryRanks.put returns the OLD value (or null on first registration)
+                String prev = this.prevPrimaryRanks.put(uuid, user.primaryRank);
+                if (player != null && prev != null && !prev.equals(user.primaryRank)) {
+                    PermissionModels.PermissionData snap = this.store.snapshot();
+                    PermissionModels.Rank rank = snap.ranks.get(user.primaryRank);
+                    String displayName = (rank != null && !rank.displayName.isBlank()) ? rank.displayName : user.primaryRank;
+                    player.sendSystemMessage(Component.literal(
+                            "§6[NextNodes] §aTu rango ha cambiado a: §f" + displayName));
+                }
+            } catch (Exception ignored) {}
+        });
     }
 
     private static Boolean firstDefined(Boolean... values) {
