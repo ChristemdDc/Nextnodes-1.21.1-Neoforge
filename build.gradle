@@ -104,10 +104,15 @@ dependencies {
     // And its provides the option to then use net.minecraft as the group, and one of; client, server or joined as the module name, plus the game version as version.
     // For all intends and purposes: You can treat this dependency as if it is a normal library you would use.
     implementation "net.neoforged:neoforge:${neo_version}"
-    jarJar(implementation(group: 'org.xerial', name: 'sqlite-jdbc')) {
-        version {
-            prefer '3.46.1.3'
-        }
+    // MongoDB sync driver (embedded via jarJar - connects to a local MongoDB instance)
+    jarJar(implementation(group: 'org.mongodb', name: 'bson')) {
+        version { prefer '5.1.1' }
+    }
+    jarJar(implementation(group: 'org.mongodb', name: 'mongodb-driver-core')) {
+        version { prefer '5.1.1' }
+    }
+    jarJar(implementation(group: 'org.mongodb', name: 'mongodb-driver-sync')) {
+        version { prefer '5.1.1' }
     }
 
     // Example optional mod dependency with JEI

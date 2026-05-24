@@ -20,7 +20,6 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.loading.FMLEnvironment;
-import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.CommandEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
@@ -33,22 +32,28 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Mod(NextNodesPermissions.MOD_ID)
 public final class NextNodesPermissions {
     public static final String MOD_ID = "nextnodes_permissions";
     private static final Logger LOGGER = LoggerFactory.getLogger(NextNodesPermissions.class);
 
-    private static final Set<String> HIDDEN_COMMANDS = Set.of("nn");
+    private static final Set<String> HIDDEN_COMMANDS = Set.of();
 
     private final PermissionStore store;
     private final PermissionResolver resolver;
     private final CommandCatalog commandCatalog;
+    private final AuditLog auditLog;
+    private final RankHistoryLog rankHistoryLog;
+    /** Tracks each online player's primaryRank to detect changes and notify them. */
+    private final Map<UUID, String> prevPrimaryRanks = new ConcurrentHashMap<>();
     private MinecraftServer server;
     private WebPanelServer webPanel;
 
@@ -57,16 +62,22 @@ public final class NextNodesPermissions {
             this.store = null;
             this.resolver = null;
             this.commandCatalog = null;
+            this.auditLog = null;
+            this.rankHistoryLog = null;
             LOGGER.info("NextNodes Permissions is installed on the client; server-only services are disabled.");
             return;
         }
 
-        Path database = FMLPaths.CONFIGDIR.get().resolve("nextnodes-permissions.sqlite");
-        this.store = new PermissionStore(database);
+        String mongoUri = System.getProperty("nextnodes.mongodb.uri", "mongodb://localhost:27017");
+        String mongoDb  = System.getProperty("nextnodes.mongodb.database", "nextnodes_permissions");
+        this.store = new PermissionStore(mongoUri, mongoDb);
         this.resolver = new PermissionResolver(this.store);
         this.commandCatalog = new CommandCatalog();
+        this.auditLog = new AuditLog(this.store);
+        this.rankHistoryLog = new RankHistoryLog(this.store);
         this.store.addChangeListener(this::refreshOnlinePlayers);
         this.store.addOnlineChangeListener(this::refreshOnlinePlayerNames);
+        this.store.addUserSavedListener(this::onUserSaved);
         try {
             this.store.load();
         } catch (IOException ex) {
@@ -99,6 +110,14 @@ public final class NextNodesPermissions {
         return this.commandCatalog;
     }
 
+    public AuditLog auditLog() {
+        return this.auditLog;
+    }
+
+    public RankHistoryLog rankHistoryLog() {
+        return this.rankHistoryLog;
+    }
+
     public boolean isWebPanelRunning() {
         return this.webPanel != null && this.webPanel.isRunning();
     }
@@ -126,8 +145,11 @@ public final class NextNodesPermissions {
     @net.neoforged.bus.api.SubscribeEvent
     public void onServerStarting(ServerStartingEvent event) {
         this.server = event.getServer();
-        int port = Integer.getInteger("nextnodes.web.port", 8765);
+        int port = Integer.getInteger("nextnodes.web.port", 25900);
         this.webPanel = new WebPanelServer(this.store, port, this.commandCatalog::snapshot);
+        this.webPanel.setServerIp(event.getServer().getLocalIp());
+        this.webPanel.setAuditLog(this.auditLog);
+        this.webPanel.setRankHistoryLog(this.rankHistoryLog);
         this.webPanel.setOnSessionExpired(() -> {
             LOGGER.info("NextNodes Permissions web panel session expired");
         });
@@ -145,23 +167,36 @@ public final class NextNodesPermissions {
 
     @net.neoforged.bus.api.SubscribeEvent
     public void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
-        try {
-            this.store.touchPlayer(event.getEntity().getUUID(), event.getEntity().getGameProfile().getName(), true);
-            if (event.getEntity() instanceof ServerPlayer player) {
-                refreshPlayer(player);
+        UUID uuid = event.getEntity().getUUID();
+        String name = event.getEntity().getGameProfile().getName();
+        MinecraftServer currentServer = this.server;
+        CompletableFuture.runAsync(() -> {
+            try {
+                this.store.touchPlayer(uuid, name, true);
+            } catch (IOException ex) {
+                LOGGER.error("Unable to update player permission profile", ex);
             }
-        } catch (IOException ex) {
-            LOGGER.error("Unable to update player permission profile", ex);
-        }
+        }).thenRun(() -> {
+            if (currentServer != null) {
+                currentServer.execute(() -> {
+                    ServerPlayer player = currentServer.getPlayerList().getPlayer(uuid);
+                    if (player != null) refreshPlayer(player);
+                });
+            }
+        });
     }
 
     @net.neoforged.bus.api.SubscribeEvent
     public void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
-        try {
-            this.store.setOnline(event.getEntity().getUUID(), false);
-        } catch (IOException ex) {
-            LOGGER.error("Unable to update player permission profile", ex);
-        }
+        UUID uuid = event.getEntity().getUUID();
+        this.prevPrimaryRanks.remove(uuid);
+        CompletableFuture.runAsync(() -> {
+            try {
+                this.store.setOnline(uuid, false);
+            } catch (IOException ex) {
+                LOGGER.error("Unable to update player permission profile", ex);
+            }
+        });
     }
 
     @net.neoforged.bus.api.SubscribeEvent
@@ -242,6 +277,27 @@ public final class NextNodesPermissions {
         this.store.load();
         this.resolver.invalidate();
         refreshOnlinePlayers();
+    }
+
+    /**
+     * Called by PermissionStore after every saveUser / touchPlayer.
+     * Notifies the online player if their primaryRank changed.
+     */
+    private void onUserSaved(PermissionModels.UserEntry user) {
+        if (this.server == null) return;
+        try {
+            UUID uuid = UUID.fromString(user.uuid);
+            ServerPlayer player = this.server.getPlayerList().getPlayer(uuid);
+            // prevPrimaryRanks.put returns the OLD value (or null on first registration)
+            String prev = this.prevPrimaryRanks.put(uuid, user.primaryRank);
+            if (player != null && prev != null && !prev.equals(user.primaryRank)) {
+                PermissionModels.PermissionData snap = this.store.snapshot();
+                PermissionModels.Rank rank = snap.ranks.get(user.primaryRank);
+                String displayName = (rank != null && !rank.displayName.isBlank()) ? rank.displayName : user.primaryRank;
+                player.sendSystemMessage(Component.literal(
+                        "§6[NextNodes] §aTu rango ha cambiado a: §f" + displayName));
+            }
+        } catch (Exception ignored) {}
     }
 
     private static Boolean firstDefined(Boolean... values) {

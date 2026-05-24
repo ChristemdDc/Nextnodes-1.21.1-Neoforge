@@ -1,13 +1,18 @@
 package com.nextnodes.permissions.web;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.nextnodes.permissions.AuditLog;
 import com.nextnodes.permissions.CommandCatalog.CommandInfo;
+import com.nextnodes.permissions.PermissionModels.PermissionData;
 import com.nextnodes.permissions.PermissionModels.Rank;
 import com.nextnodes.permissions.PermissionModels.UserEntry;
 import com.nextnodes.permissions.PermissionStore;
+import com.nextnodes.permissions.RankHistoryLog;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import org.bson.Document;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -16,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -44,12 +50,15 @@ public final class WebPanelServer implements AutoCloseable {
     private final AtomicInteger loginAttempts = new AtomicInteger(0);
     private final AtomicLong loginCooldownUntil = new AtomicLong(0);
 
+    private String ip = "localhost";
     private HttpServer server;
     private String token;
     private String password;
     private volatile long sessionExpiresAt;
     private ScheduledFuture<?> shutdownTask;
     private Runnable onSessionExpired;
+    private AuditLog auditLog;
+    private RankHistoryLog historyLog;
 
     public WebPanelServer(PermissionStore store, int port, Supplier<List<CommandInfo>> commandSupplier) {
         this.store = store;
@@ -67,7 +76,7 @@ public final class WebPanelServer implements AutoCloseable {
         this.token = newToken();
         this.loginAttempts.set(0);
         this.loginCooldownUntil.set(0);
-        this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", this.port), 0);
+        this.server = HttpServer.create(new InetSocketAddress(port), 0);
         this.server.createContext("/", this::handle);
         this.server.setExecutor(Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "nextnodes-web-" + r.hashCode());
@@ -96,7 +105,7 @@ public final class WebPanelServer implements AutoCloseable {
     }
 
     public String url() {
-        return "http://localhost:" + this.port + "/";
+        return "http://" + this.ip + ":" + this.port + "/";
     }
 
     public long remainingMs() {
@@ -111,6 +120,26 @@ public final class WebPanelServer implements AutoCloseable {
 
     public void setOnSessionExpired(Runnable callback) {
         this.onSessionExpired = callback;
+    }
+
+    public void setAuditLog(AuditLog auditLog) {
+        this.auditLog = auditLog;
+    }
+
+    public void setRankHistoryLog(RankHistoryLog historyLog) {
+        this.historyLog = historyLog;
+    }
+
+    public void setServerIp(String serverIp) {
+        if (serverIp == null || serverIp.isBlank() || serverIp.equals("0.0.0.0")) {
+            try {
+                this.ip = java.net.InetAddress.getLocalHost().getHostAddress();
+            } catch (java.net.UnknownHostException e) {
+                this.ip = "localhost";
+            }
+        } else {
+            this.ip = serverIp;
+        }
     }
 
     @Override
@@ -144,7 +173,15 @@ public final class WebPanelServer implements AutoCloseable {
             String path = exchange.getRequestURI().getPath();
             String method = exchange.getRequestMethod();
             if (path.equals("/") || path.equals("/index.html")) {
-                send(exchange, 200, "text/html; charset=utf-8", WebAssets.indexHtml());
+                String q = exchange.getRequestURI().getQuery();
+                String keyParam = extractParam(q, "key");
+                if (keyParam != null && keyParam.equals(this.password) && this.token != null) {
+                    String html = WebAssets.indexHtml().replace("</head>",
+                            "<script>localStorage.setItem('nn_token','" + this.token + "');</script></head>");
+                    send(exchange, 200, "text/html; charset=utf-8", html);
+                } else {
+                    send(exchange, 200, "text/html; charset=utf-8", WebAssets.indexHtml());
+                }
                 return;
             }
             if (path.equals("/web/styles.css")) {
@@ -205,11 +242,13 @@ public final class WebPanelServer implements AutoCloseable {
                         rank.name = name;
                     }
                     this.store.saveRank(rank);
+                    if (this.auditLog != null) this.auditLog.log("web-panel", "web-panel", "rank.save", "rank", rank.name, "");
                     sendJson(exchange, 200, ok());
                     return;
                 }
                 if (method.equals("DELETE")) {
                     this.store.deleteRank(name);
+                    if (this.auditLog != null) this.auditLog.log("web-panel", "web-panel", "rank.delete", "rank", name, "");
                     sendJson(exchange, 200, ok());
                     return;
                 }
@@ -222,14 +261,76 @@ public final class WebPanelServer implements AutoCloseable {
                         user.uuid = uuid;
                     }
                     this.store.saveUser(user);
+                    if (this.auditLog != null) this.auditLog.log("web-panel", "web-panel", "user.save", "user", user.uuid, "");
                     sendJson(exchange, 200, ok());
                     return;
                 }
                 if (method.equals("DELETE")) {
                     this.store.deleteUser(uuid);
+                    if (this.auditLog != null) this.auditLog.log("web-panel", "web-panel", "user.delete", "user", uuid, "");
                     sendJson(exchange, 200, ok());
                     return;
                 }
+            }
+            // --- export / import ---
+            if (path.equals("/api/export") && method.equals("GET")) {
+                String json = this.store.snapshotJson();
+                exchange.getResponseHeaders().set("Content-Disposition", "attachment; filename=nextnodes-export.json");
+                send(exchange, 200, "application/json; charset=utf-8", json);
+                if (this.auditLog != null) this.auditLog.log("web-panel", "web-panel", "export", "", "", "");
+                return;
+            }
+            if (path.equals("/api/import") && method.equals("POST")) {
+                String body = readBody(exchange);
+                PermissionData pd = GSON.fromJson(body, PermissionData.class);
+                if (pd == null) { sendJson(exchange, 400, error("JSON inv\u00e1lido")); return; }
+                this.store.importAll(pd);
+                if (this.auditLog != null) this.auditLog.log("web-panel", "web-panel", "import", "", "", "ranks=" + pd.ranks.size() + " users=" + pd.users.size());
+                sendJson(exchange, 200, ok());
+                return;
+            }
+            // --- audit log ---
+            if (path.equals("/api/audit") && method.equals("GET")) {
+                int limit = parseQueryInt(exchange, "limit", 100);
+                JsonArray arr = new JsonArray();
+                if (this.auditLog != null) {
+                    for (Document doc : this.auditLog.recent(limit)) arr.add(docToJson(doc));
+                }
+                send(exchange, 200, "application/json; charset=utf-8", GSON.toJson(arr));
+                return;
+            }
+            // --- rank history ---
+            if (path.startsWith("/api/history/") && method.equals("GET")) {
+                String uuid = decodeSegment(path.substring("/api/history/".length()));
+                int limit = parseQueryInt(exchange, "limit", 50);
+                JsonArray arr = new JsonArray();
+                if (this.historyLog != null) {
+                    for (Document doc : this.historyLog.forPlayer(uuid, limit)) arr.add(docToJson(doc));
+                }
+                send(exchange, 200, "application/json; charset=utf-8", GSON.toJson(arr));
+                return;
+            }
+            // --- API key management ---
+            if (path.equals("/api/apikey") && method.equals("GET")) {
+                String key = this.store.getApiKey();
+                JsonObject resp = new JsonObject();
+                if (key == null || key.isBlank()) {
+                    resp.addProperty("apiKey", (String) null);
+                } else {
+                    String masked = key.length() > 8 ? key.substring(0, 8) + "***" : "***";
+                    resp.addProperty("apiKey", masked);
+                }
+                sendJson(exchange, 200, resp);
+                return;
+            }
+            if (path.equals("/api/apikey/regenerate") && method.equals("POST")) {
+                String newKey = newToken();
+                this.store.setApiKey(newKey);
+                if (this.auditLog != null) this.auditLog.log("web-panel", "web-panel", "apikey.regenerate", "", "", "");
+                JsonObject resp = new JsonObject();
+                resp.addProperty("apiKey", newKey);
+                sendJson(exchange, 200, resp);
+                return;
             }
             sendJson(exchange, 404, error("not found"));
         } catch (Exception ex) {
@@ -312,8 +413,48 @@ public final class WebPanelServer implements AutoCloseable {
         if (auth != null && auth.equals("Bearer " + this.token)) {
             return true;
         }
+        if (auth != null && auth.startsWith("ApiKey ")) {
+            String key = auth.substring(7).trim();
+            String storedKey = this.store.getApiKey();
+            if (storedKey != null && !storedKey.isBlank() && storedKey.equals(key)) return true;
+        }
         String query = exchange.getRequestURI().getQuery();
         return query != null && query.contains("token=" + this.token);
+    }
+
+    private static JsonObject docToJson(Document doc) {
+        JsonObject obj = new JsonObject();
+        for (Map.Entry<String, Object> entry : doc.entrySet()) {
+            String k = entry.getKey();
+            Object v = entry.getValue();
+            if (v instanceof String s) obj.addProperty(k, s);
+            else if (v instanceof Number n) obj.addProperty(k, n.longValue());
+            else if (v instanceof Boolean b) obj.addProperty(k, b);
+            else if (v != null) obj.addProperty(k, v.toString());
+        }
+        return obj;
+    }
+
+    private static int parseQueryInt(HttpExchange exchange, String key, int defaultVal) {
+        String query = exchange.getRequestURI().getQuery();
+        if (query == null) return defaultVal;
+        for (String part : query.split("&")) {
+            if (part.startsWith(key + "=")) {
+                try { return Integer.parseInt(part.substring(key.length() + 1)); }
+                catch (NumberFormatException ignored) {}
+            }
+        }
+        return defaultVal;
+    }
+
+    private static String extractParam(String query, String key) {
+        if (query == null) return null;
+        for (String part : query.split("&")) {
+            if (part.startsWith(key + "=")) {
+                return part.substring(key.length() + 1);
+            }
+        }
+        return null;
     }
 
     private static JsonObject readJson(HttpExchange exchange) throws IOException {

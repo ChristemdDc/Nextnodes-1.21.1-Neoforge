@@ -1,12 +1,17 @@
 package com.nextnodes.permissions.commands;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
+import com.nextnodes.permissions.AuditLog;
 import com.nextnodes.permissions.NextNodesPermissions;
 import com.nextnodes.permissions.PermissionModels;
 import com.nextnodes.permissions.PermissionModels.PermissionData;
+import com.nextnodes.permissions.PermissionModels.PermissionRule;
 import com.nextnodes.permissions.PermissionModels.Rank;
 import com.nextnodes.permissions.PermissionModels.UserEntry;
+import com.nextnodes.permissions.RankHistoryLog;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -19,15 +24,25 @@ import net.minecraft.network.chat.Style;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 
 import java.io.IOException;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
 
 public final class NextNodesCommands {
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
+    private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
+
     private final NextNodesPermissions mod;
 
     public NextNodesCommands(NextNodesPermissions mod) {
@@ -36,16 +51,20 @@ public final class NextNodesCommands {
 
     @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
+
+        // /nextnodes reload | check
         event.getDispatcher().register(Commands.literal("nextnodes")
                 .requires(source -> source.hasPermission(4))
                 .then(Commands.literal("reload")
                         .executes(context -> {
                             try {
                                 this.mod.reload();
-                                context.getSource().sendSuccess(() -> Component.literal("NextNodes Permissions recargado desde SQLite."), true);
+                                context.getSource().sendSuccess(
+                                        () -> Component.literal("NextNodes Permissions recargado desde MongoDB."), true);
                                 return 1;
                             } catch (IOException ex) {
-                                context.getSource().sendFailure(Component.literal("No se pudo recargar: " + ex.getMessage()));
+                                context.getSource().sendFailure(
+                                        Component.literal("No se pudo recargar: " + ex.getMessage()));
                                 return 0;
                             }
                         }))
@@ -55,36 +74,37 @@ public final class NextNodesCommands {
                                         .executes(context -> {
                                             ServerPlayer player = EntityArgument.getPlayer(context, "player");
                                             String permission = StringArgumentType.getString(context, "permission");
-                                            Boolean result = this.mod.resolver().resolveBoolean(player.getUUID(), player, permission);
+                                            Boolean result = this.mod.resolver().resolveBoolean(
+                                                    player.getUUID(), player, permission);
                                             String text = result == null ? "undefined" : result.toString();
-                                            context.getSource().sendSuccess(() -> Component.literal(player.getGameProfile().getName() + " -> " + permission + " = " + text), false);
+                                            context.getSource().sendSuccess(
+                                                    () -> Component.literal(player.getGameProfile().getName()
+                                                            + " -> " + permission + " = " + text), false);
                                             return result != null && result ? 1 : 0;
                                         })))));
 
+        // /nn ...
         event.getDispatcher().register(Commands.literal("nn")
                 .requires(source -> source.hasPermission(4))
+
+                // --- web ---
                 .then(Commands.literal("open")
                         .then(Commands.literal("web")
                                 .executes(context -> {
                                     try {
                                         if (this.mod.isWebPanelRunning()) {
-                                            context.getSource().sendSuccess(() -> styledMessage(
-                                                    "El panel web ya esta activo.",
-                                                    this.mod.webUrl(),
-                                                    null
-                                            ), false);
+                                            context.getSource().sendSuccess(
+                                                    () -> styledMessage("El panel web ya esta activo.", this.mod.webUrl(), null), false);
                                             return 1;
                                         }
                                         String password = this.mod.startWebPanel();
                                         String url = this.mod.webUrl();
-                                        context.getSource().sendSuccess(() -> styledMessage(
-                                                "Panel web iniciado (15 minutos).",
-                                                url,
-                                                password
-                                        ), false);
+                                        context.getSource().sendSuccess(
+                                                () -> styledMessage("Panel web iniciado (15 minutos).", url, password), false);
                                         return 1;
                                     } catch (IOException ex) {
-                                        context.getSource().sendFailure(Component.literal("No se pudo iniciar el panel: " + ex.getMessage()));
+                                        context.getSource().sendFailure(
+                                                Component.literal("No se pudo iniciar el panel: " + ex.getMessage()));
                                         return 0;
                                     }
                                 })))
@@ -96,18 +116,35 @@ public final class NextNodesCommands {
                                         return 0;
                                     }
                                     this.mod.stopWebPanel();
-                                    context.getSource().sendSuccess(() -> Component.literal("Panel web detenido.").withStyle(ChatFormatting.RED), false);
+                                    context.getSource().sendSuccess(
+                                            () -> Component.literal("Panel web detenido.").withStyle(ChatFormatting.RED), false);
                                     return 1;
                                 })))
+                .then(Commands.literal("stop")
+                        .then(Commands.literal("web")
+                                .executes(context -> {
+                                    if (!this.mod.isWebPanelRunning()) {
+                                        context.getSource().sendFailure(Component.literal("El panel web no esta activo."));
+                                        return 0;
+                                    }
+                                    this.mod.stopWebPanel();
+                                    context.getSource().sendSuccess(
+                                            () -> Component.literal("Panel web detenido.").withStyle(ChatFormatting.RED), false);
+                                    return 1;
+                                })))
+
+                // --- rank ---
                 .then(Commands.literal("rank")
                         .then(Commands.literal("list")
                                 .executes(context -> {
                                     PermissionData data = this.mod.store().snapshot();
                                     if (data.ranks.isEmpty()) {
-                                        context.getSource().sendSuccess(() -> Component.literal("No hay rangos definidos.").withStyle(ChatFormatting.GRAY), false);
+                                        context.getSource().sendSuccess(
+                                                () -> Component.literal("No hay rangos definidos.").withStyle(ChatFormatting.GRAY), false);
                                         return 0;
                                     }
-                                    MutableComponent msg = Component.literal("Rangos (" + data.ranks.size() + ")").withStyle(ChatFormatting.AQUA, ChatFormatting.BOLD);
+                                    MutableComponent msg = Component.literal("Rangos (" + data.ranks.size() + ")")
+                                            .withStyle(ChatFormatting.AQUA, ChatFormatting.BOLD);
                                     for (Rank r : data.ranks.values()) {
                                         msg.append(Component.literal("\n  "));
                                         msg.append(Component.literal(r.name).withStyle(ChatFormatting.WHITE));
@@ -170,14 +207,75 @@ public final class NextNodesCommands {
                                                     String input = StringArgumentType.getString(context, "jugador");
                                                     String rankName = StringArgumentType.getString(context, "rango");
                                                     return cmdRankSet(context.getSource(), input, rankName);
-                                                }))))));
+                                                }))))
+                        // /nn rank commands <rankName> allow-all | block-all | reset-all
+                        .then(Commands.literal("commands")
+                                .then(Commands.argument("rango", StringArgumentType.word())
+                                        .suggests(rankSuggestions())
+                                        .then(Commands.literal("allow-all")
+                                                .executes(context -> cmdRankCommands(
+                                                        context.getSource(),
+                                                        StringArgumentType.getString(context, "rango"), true, false)))
+                                        .then(Commands.literal("block-all")
+                                                .executes(context -> cmdRankCommands(
+                                                        context.getSource(),
+                                                        StringArgumentType.getString(context, "rango"), false, false)))
+                                        .then(Commands.literal("reset-all")
+                                                .executes(context -> cmdRankCommands(
+                                                        context.getSource(),
+                                                        StringArgumentType.getString(context, "rango"), true, true))))))
+
+                // --- perm ---
+                .then(Commands.literal("perm")
+                        .then(Commands.literal("add")
+                                .then(Commands.argument("jugador", StringArgumentType.word())
+                                        .suggests(playerSuggestions())
+                                        .then(Commands.argument("nodo", StringArgumentType.word())
+                                                .then(Commands.argument("valor", StringArgumentType.word())
+                                                        .suggests((ctx, b) -> {
+                                                            b.suggest("allow"); b.suggest("deny");
+                                                            return b.buildFuture();
+                                                        })
+                                                        // permanent
+                                                        .executes(context -> cmdPermAdd(
+                                                                context.getSource(),
+                                                                StringArgumentType.getString(context, "jugador"),
+                                                                StringArgumentType.getString(context, "nodo"),
+                                                                StringArgumentType.getString(context, "valor"),
+                                                                null))
+                                                        // temporary: /nn perm add <player> <node> allow 1h
+                                                        .then(Commands.argument("duracion", StringArgumentType.word())
+                                                                .executes(context -> cmdPermAdd(
+                                                                        context.getSource(),
+                                                                        StringArgumentType.getString(context, "jugador"),
+                                                                        StringArgumentType.getString(context, "nodo"),
+                                                                        StringArgumentType.getString(context, "valor"),
+                                                                        StringArgumentType.getString(context, "duracion"))))))))
+                        .then(Commands.literal("remove")
+                                .then(Commands.argument("jugador", StringArgumentType.word())
+                                        .suggests(playerSuggestions())
+                                        .then(Commands.argument("nodo", StringArgumentType.word())
+                                                .executes(context -> cmdPermRemove(
+                                                        context.getSource(),
+                                                        StringArgumentType.getString(context, "jugador"),
+                                                        StringArgumentType.getString(context, "nodo")))))))
+
+                // --- export / import ---
+                .then(Commands.literal("export")
+                        .executes(context -> cmdExport(context.getSource())))
+                .then(Commands.literal("import")
+                        .executes(context -> cmdImport(context.getSource()))));
     }
+
+    // -------------------------------------------------------------------------
+    // Rank sub-commands
+    // -------------------------------------------------------------------------
 
     private int cmdRankAdd(CommandSourceStack source, String input, String rankName) {
         PermissionData data = this.mod.store().snapshot();
         String normalized = PermissionModels.normalizeName(rankName);
         if (!data.ranks.containsKey(normalized)) {
-            source.sendFailure(Component.literal("El rango '" + normalized + "' no existe. Usa /nn rank list para ver los disponibles."));
+            source.sendFailure(Component.literal("El rango '" + normalized + "' no existe. Usa /nn rank list."));
             return 0;
         }
         UserEntry user = findUser(input, source.getServer());
@@ -186,18 +284,18 @@ public final class NextNodesCommands {
             return 0;
         }
         if (user.ranks.contains(normalized)) {
-            String display = user.name.isBlank() ? user.uuid : user.name;
+            String display = displayName(user);
             source.sendFailure(Component.literal(display + " ya tiene el rango '" + normalized + "'."));
             return 0;
         }
         user.ranks.add(normalized);
-        if (user.primaryRank.isBlank()) {
-            user.primaryRank = normalized;
-        }
+        if (user.primaryRank.isBlank()) user.primaryRank = normalized;
         try {
             this.mod.store().saveUser(user);
-            String display = user.name.isBlank() ? user.uuid : user.name;
+            String display = displayName(user);
             source.sendSuccess(() -> Component.literal("Rango '" + normalized + "' añadido a " + display + ".").withStyle(ChatFormatting.GREEN), true);
+            logAudit(source, "user.rank.add", "user", user.uuid, "rank=" + normalized);
+            this.mod.rankHistoryLog().record(user.uuid, user.name, "add", normalized, actorId(source), actorName(source));
             return 1;
         } catch (IOException ex) {
             source.sendFailure(Component.literal("Error al guardar: " + ex.getMessage()));
@@ -213,8 +311,7 @@ public final class NextNodesCommands {
             return 0;
         }
         if (!user.ranks.contains(normalized)) {
-            String display = user.name.isBlank() ? user.uuid : user.name;
-            source.sendFailure(Component.literal(display + " no tiene el rango '" + normalized + "'."));
+            source.sendFailure(Component.literal(displayName(user) + " no tiene el rango '" + normalized + "'."));
             return 0;
         }
         user.ranks.remove(normalized);
@@ -224,8 +321,10 @@ public final class NextNodesCommands {
         }
         try {
             this.mod.store().saveUser(user);
-            String display = user.name.isBlank() ? user.uuid : user.name;
+            String display = displayName(user);
             source.sendSuccess(() -> Component.literal("Rango '" + normalized + "' eliminado de " + display + ".").withStyle(ChatFormatting.RED), true);
+            logAudit(source, "user.rank.remove", "user", user.uuid, "rank=" + normalized);
+            this.mod.rankHistoryLog().record(user.uuid, user.name, "remove", normalized, actorId(source), actorName(source));
             return 1;
         } catch (IOException ex) {
             source.sendFailure(Component.literal("Error al guardar: " + ex.getMessage()));
@@ -237,7 +336,7 @@ public final class NextNodesCommands {
         PermissionData data = this.mod.store().snapshot();
         String normalized = PermissionModels.normalizeName(rankName);
         if (!data.ranks.containsKey(normalized)) {
-            source.sendFailure(Component.literal("El rango '" + normalized + "' no existe. Usa /nn rank list para ver los disponibles."));
+            source.sendFailure(Component.literal("El rango '" + normalized + "' no existe. Usa /nn rank list."));
             return 0;
         }
         UserEntry user = findUser(input, source.getServer());
@@ -246,19 +345,167 @@ public final class NextNodesCommands {
             return 0;
         }
         user.primaryRank = normalized;
-        if (!user.ranks.contains(normalized)) {
-            user.ranks.add(normalized);
-        }
+        if (!user.ranks.contains(normalized)) user.ranks.add(normalized);
         try {
             this.mod.store().saveUser(user);
-            String display = user.name.isBlank() ? user.uuid : user.name;
+            String display = displayName(user);
             source.sendSuccess(() -> Component.literal("Rango principal de " + display + " establecido a '" + normalized + "'.").withStyle(ChatFormatting.GREEN), true);
+            logAudit(source, "user.rank.set-primary", "user", user.uuid, "rank=" + normalized);
+            this.mod.rankHistoryLog().record(user.uuid, user.name, "set-primary", normalized, actorId(source), actorName(source));
             return 1;
         } catch (IOException ex) {
             source.sendFailure(Component.literal("Error al guardar: " + ex.getMessage()));
             return 0;
         }
     }
+
+    /**
+     * @param allowAll  true=allow wildcard, false=deny wildcard (ignored when reset=true)
+     * @param reset     true=remove all command.* rules instead of adding
+     */
+    private int cmdRankCommands(CommandSourceStack source, String rankName, boolean allowAll, boolean reset) {
+        String normalized = PermissionModels.normalizeName(rankName);
+        PermissionData data = this.mod.store().snapshot();
+        if (!data.ranks.containsKey(normalized)) {
+            source.sendFailure(Component.literal("El rango '" + normalized + "' no existe."));
+            return 0;
+        }
+        Rank rank = data.ranks.get(normalized);
+        // Remove existing command.* wildcard rules
+        rank.permissions.removeIf(r -> r.node.equals("command.*") || r.node.equals("*"));
+        if (!reset) {
+            PermissionRule rule = new PermissionRule();
+            rule.node  = "command.*";
+            rule.value = allowAll;
+            rule.mode  = "wildcard";
+            rank.permissions.add(0, rule); // prepend so it takes priority
+        }
+        try {
+            this.mod.store().saveRank(rank);
+            String action = reset ? "Permisos de comandos reseteados" : (allowAll ? "Todos los comandos PERMITIDOS" : "Todos los comandos BLOQUEADOS");
+            source.sendSuccess(() -> Component.literal("[" + normalized + "] " + action).withStyle(reset ? ChatFormatting.YELLOW : allowAll ? ChatFormatting.GREEN : ChatFormatting.RED), true);
+            logAudit(source, "rank.commands." + (reset ? "reset" : allowAll ? "allow-all" : "block-all"), "rank", normalized, "");
+            return 1;
+        } catch (IOException ex) {
+            source.sendFailure(Component.literal("Error al guardar el rango: " + ex.getMessage()));
+            return 0;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Permission sub-commands
+    // -------------------------------------------------------------------------
+
+    private int cmdPermAdd(CommandSourceStack source, String input, String node, String valor, String duracion) {
+        boolean allow = !valor.equalsIgnoreCase("deny");
+        Long expiresAt = null;
+        if (duracion != null && !duracion.isBlank()) {
+            long ms = parseDuration(duracion);
+            if (ms <= 0) {
+                source.sendFailure(Component.literal("Duración inválida: '" + duracion + "'. Ejemplos: 30m 2h 1d"));
+                return 0;
+            }
+            expiresAt = System.currentTimeMillis() + ms;
+        }
+        UserEntry user = findUser(input, source.getServer());
+        if (user == null) {
+            source.sendFailure(Component.literal("Jugador no encontrado: " + input));
+            return 0;
+        }
+        PermissionRule rule = new PermissionRule();
+        rule.node      = node;
+        rule.value     = allow;
+        rule.mode      = PermissionModels.inferMode(node);
+        rule.expiresAt = expiresAt;
+        user.permissions.add(rule);
+        try {
+            this.mod.store().saveUser(user);
+            String display = displayName(user);
+            String expiry = expiresAt == null ? "permanente" : "expira en " + duracion;
+            source.sendSuccess(() -> Component.literal(
+                    "[" + display + "] " + node + " = " + (allow ? "§aSI" : "§cNO") + " §r(" + expiry + ")").withStyle(ChatFormatting.WHITE), true);
+            logAudit(source, "user.perm.add", "user", user.uuid, "node=" + node + " value=" + allow + (expiresAt != null ? " duration=" + duracion : ""));
+            return 1;
+        } catch (IOException ex) {
+            source.sendFailure(Component.literal("Error al guardar: " + ex.getMessage()));
+            return 0;
+        }
+    }
+
+    private int cmdPermRemove(CommandSourceStack source, String input, String node) {
+        UserEntry user = findUser(input, source.getServer());
+        if (user == null) {
+            source.sendFailure(Component.literal("Jugador no encontrado: " + input));
+            return 0;
+        }
+        int before = user.permissions.size();
+        user.permissions.removeIf(r -> r.node.equalsIgnoreCase(node));
+        int removed = before - user.permissions.size();
+        if (removed == 0) {
+            source.sendFailure(Component.literal(displayName(user) + " no tiene ninguna regla para '" + node + "'."));
+            return 0;
+        }
+        try {
+            this.mod.store().saveUser(user);
+            source.sendSuccess(() -> Component.literal(removed + " regla(s) de '" + node + "' eliminadas de " + displayName(user) + ".").withStyle(ChatFormatting.YELLOW), true);
+            logAudit(source, "user.perm.remove", "user", user.uuid, "node=" + node + " count=" + removed);
+            return removed;
+        } catch (IOException ex) {
+            source.sendFailure(Component.literal("Error al guardar: " + ex.getMessage()));
+            return 0;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Export / Import
+    // -------------------------------------------------------------------------
+
+    private int cmdExport(CommandSourceStack source) {
+        try {
+            Path dir = FMLPaths.CONFIGDIR.get().resolve("nextnodes-backups");
+            Files.createDirectories(dir);
+            String stamp = STAMP.format(LocalDateTime.now());
+            Path file = dir.resolve("nextnodes-export-" + stamp + ".json");
+            try (Writer w = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
+                w.write(this.mod.store().snapshotJson());
+            }
+            String filePath = file.toAbsolutePath().toString();
+            source.sendSuccess(() -> Component.literal("Exportado a: " + filePath).withStyle(ChatFormatting.GREEN), true);
+            logAudit(source, "export", "", "", "file=" + filePath);
+            return 1;
+        } catch (IOException ex) {
+            source.sendFailure(Component.literal("Error al exportar: " + ex.getMessage()));
+            return 0;
+        }
+    }
+
+    private int cmdImport(CommandSourceStack source) {
+        Path file = FMLPaths.CONFIGDIR.get().resolve("nextnodes-import.json");
+        if (!Files.exists(file)) {
+            source.sendFailure(Component.literal("Archivo no encontrado: " + file.toAbsolutePath() + ". Coloca el JSON ahí antes de importar."));
+            return 0;
+        }
+        try {
+            String json = Files.readString(file, StandardCharsets.UTF_8);
+            PermissionData pd = new GsonBuilder().create().fromJson(json, PermissionData.class);
+            if (pd == null) {
+                source.sendFailure(Component.literal("El archivo no contiene un JSON válido."));
+                return 0;
+            }
+            this.mod.store().importAll(pd);
+            this.mod.reload();
+            source.sendSuccess(() -> Component.literal("Importación completada. " + pd.ranks.size() + " rangos, " + pd.users.size() + " usuarios.").withStyle(ChatFormatting.GREEN), true);
+            logAudit(source, "import", "", "", "ranks=" + pd.ranks.size() + " users=" + pd.users.size());
+            return 1;
+        } catch (Exception ex) {
+            source.sendFailure(Component.literal("Error al importar: " + ex.getMessage()));
+            return 0;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
 
     private UserEntry findUser(String input, MinecraftServer server) {
         PermissionData data = this.mod.store().snapshot();
@@ -289,23 +536,69 @@ public final class NextNodesCommands {
 
     private static UserEntry copyUser(UserEntry src) {
         UserEntry copy = new UserEntry();
-        copy.uuid = src.uuid;
-        copy.name = src.name;
+        copy.uuid        = src.uuid;
+        copy.name        = src.name;
         copy.primaryRank = src.primaryRank;
-        copy.ranks = new ArrayList<>(src.ranks);
-        copy.permissions = src.permissions;
-        copy.meta = new LinkedHashMap<>(src.meta);
-        copy.lastSeen = src.lastSeen;
-        copy.online = src.online;
+        copy.ranks       = new ArrayList<>(src.ranks);
+        copy.permissions = new ArrayList<>(src.permissions);
+        copy.meta        = new LinkedHashMap<>(src.meta);
+        copy.lastSeen    = src.lastSeen;
+        copy.online      = src.online;
         return copy;
     }
 
+    private static String displayName(UserEntry u) {
+        return u.name.isBlank() ? u.uuid : u.name;
+    }
+
     private static UUID tryParseUuid(String s) {
-        try {
-            return UUID.fromString(s);
-        } catch (IllegalArgumentException ignored) {
-            return null;
+        try { return UUID.fromString(s); } catch (IllegalArgumentException ignored) { return null; }
+    }
+
+    /**
+     * Parses duration strings like "30m", "2h", "1d", "1h30m".
+     * @return milliseconds, or -1 if invalid
+     */
+    static long parseDuration(String s) {
+        if (s == null || s.isBlank()) return -1;
+        s = s.trim().toLowerCase();
+        long total = 0;
+        int i = 0;
+        while (i < s.length()) {
+            int start = i;
+            while (i < s.length() && Character.isDigit(s.charAt(i))) i++;
+            if (i == start || i >= s.length()) return -1;
+            long num;
+            try { num = Long.parseLong(s.substring(start, i)); } catch (NumberFormatException ex) { return -1; }
+            long multiplier = switch (s.charAt(i++)) {
+                case 's' -> 1_000L;
+                case 'm' -> 60_000L;
+                case 'h' -> 3_600_000L;
+                case 'd' -> 86_400_000L;
+                case 'w' -> 604_800_000L;
+                default  -> -1L;
+            };
+            if (multiplier < 0) return -1;
+            total += num * multiplier;
         }
+        return total > 0 ? total : -1;
+    }
+
+    private void logAudit(CommandSourceStack source, String action, String targetType, String targetId, String details) {
+        this.mod.auditLog().log(actorId(source), actorName(source), action, targetType, targetId, details);
+    }
+
+    private static String actorId(CommandSourceStack source) {
+        try {
+            ServerPlayer p = source.getPlayerOrException();
+            return p.getUUID().toString();
+        } catch (Exception ex) {
+            return "console";
+        }
+    }
+
+    private static String actorName(CommandSourceStack source) {
+        return source.getTextName();
     }
 
     private SuggestionProvider<CommandSourceStack> rankSuggestions() {
@@ -335,12 +628,13 @@ public final class NextNodesCommands {
         msg.append(Component.literal("\n"));
         msg.append(Component.literal(header).withStyle(ChatFormatting.GREEN));
         msg.append(Component.literal("\n"));
+        String clickUrl = (password != null && !password.isBlank()) ? url + "?key=" + password : url;
         msg.append(Component.literal("URL: ").withStyle(ChatFormatting.GRAY));
         msg.append(Component.literal(url).withStyle(Style.EMPTY
                 .withColor(ChatFormatting.AQUA)
                 .withUnderlined(true)
-                .withClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, url))
-                .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal("Clic para abrir")))));
+                .withClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, clickUrl))
+                .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal("Clic para abrir (auto-login)")))));
         if (password != null) {
             msg.append(Component.literal("\n"));
             msg.append(Component.literal("Clave: ").withStyle(ChatFormatting.GRAY));

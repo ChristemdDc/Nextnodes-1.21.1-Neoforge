@@ -2,67 +2,77 @@ package com.nextnodes.permissions;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.reflect.TypeToken;
+import com.mongodb.client.MongoClient;
+import com.mongodb.client.MongoClients;
+import com.mongodb.client.MongoCollection;
+import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.Filters;
+import com.mongodb.client.model.ReplaceOptions;
 import com.nextnodes.permissions.PermissionModels.PermissionData;
 import com.nextnodes.permissions.PermissionModels.PermissionRule;
 import com.nextnodes.permissions.PermissionModels.Rank;
 import com.nextnodes.permissions.PermissionModels.UserEntry;
+import org.bson.Document;
 
 import java.io.IOException;
-import java.lang.reflect.Type;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public final class PermissionStore {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
-    private static final Type STRING_LIST = new TypeToken<List<String>>() {
-    }.getType();
-    private static final Type STRING_MAP = new TypeToken<Map<String, String>>() {
-    }.getType();
+
+    private static final String COL_RANKS    = "ranks";
+    private static final String COL_USERS    = "users";
+    private static final String COL_SETTINGS = "settings";
+
+    private static final String KEY_DEFAULT_RANK   = "defaultRank";
+    private static final String KEY_SCHEMA_VERSION = "schemaVersion";
+    private static final String KEY_API_KEY        = "apiKey";
+
+    private static final ReplaceOptions UPSERT = new ReplaceOptions().upsert(true);
 
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
-    private final CopyOnWriteArrayList<Runnable> listeners = new CopyOnWriteArrayList<>();
-    private final CopyOnWriteArrayList<Runnable> onlineListeners = new CopyOnWriteArrayList<>();
-    private final Path file;
-    private PermissionData data = new PermissionData();
-    private volatile PermissionData cachedSnapshot;
-    private Connection persistentConnection;
+    private final CopyOnWriteArrayList<Runnable>           listeners            = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<Runnable>           onlineListeners      = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<Consumer<UserEntry>> userSavedListeners  = new CopyOnWriteArrayList<>();
 
-    public PermissionStore(Path file) {
-        this.file = file;
+    private final String connectionUri;
+    private final String databaseName;
+
+    private MongoClient   mongoClient;
+    private MongoDatabase database;
+
+    private PermissionData          data           = new PermissionData();
+    private volatile PermissionData cachedSnapshot;
+
+    public PermissionStore(String connectionUri, String databaseName) {
+        this.connectionUri = connectionUri;
+        this.databaseName  = databaseName;
     }
+
+    // -------------------------------------------------------------------------
+    // Lifecycle
+    // -------------------------------------------------------------------------
 
     public void load() throws IOException {
         this.lock.writeLock().lock();
         try {
-            Files.createDirectories(this.file.getParent());
-            try {
-                Class.forName("org.sqlite.JDBC");
-                closePersistentConnection();
-                this.persistentConnection = openNewConnection();
-                migrate(this.persistentConnection);
-                this.data = readAll(this.persistentConnection);
-                this.data.ensureDefaults();
-                writeDefaultsIfMissing(this.persistentConnection);
-                this.cachedSnapshot = null;
-            } catch (ClassNotFoundException | SQLException ex) {
-                throw new IOException("Unable to load SQLite permission store", ex);
-            }
+            closeClient();
+            this.mongoClient = MongoClients.create(this.connectionUri);
+            this.database    = this.mongoClient.getDatabase(this.databaseName);
+            this.data        = readAll();
+            this.data.ensureDefaults();
+            writeDefaultsIfMissing();
+            this.cachedSnapshot = null;
+        } catch (Exception ex) {
+            throw new IOException("Unable to load MongoDB permission store at " + this.connectionUri, ex);
         } finally {
             this.lock.writeLock().unlock();
         }
@@ -71,11 +81,23 @@ public final class PermissionStore {
     public void close() {
         this.lock.writeLock().lock();
         try {
-            closePersistentConnection();
+            closeClient();
         } finally {
             this.lock.writeLock().unlock();
         }
     }
+
+    private void closeClient() {
+        if (this.mongoClient != null) {
+            try { this.mongoClient.close(); } catch (Exception ignored) {}
+            this.mongoClient = null;
+            this.database    = null;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Snapshots (read-only views used by web panel and permission resolver)
+    // -------------------------------------------------------------------------
 
     public PermissionData snapshot() {
         PermissionData cached = this.cachedSnapshot;
@@ -101,6 +123,10 @@ public final class PermissionStore {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Rank mutations
+    // -------------------------------------------------------------------------
+
     public void saveRank(Rank rank) throws IOException {
         Objects.requireNonNull(rank, "rank");
         this.lock.writeLock().lock();
@@ -109,18 +135,12 @@ public final class PermissionStore {
             if (rank.name.isBlank()) {
                 throw new IllegalArgumentException("rank name is required");
             }
-            Connection connection = getConnection();
             try {
-                connection.setAutoCommit(false);
-                writeRank(connection, rank);
-                connection.commit();
+                col(COL_RANKS).replaceOne(Filters.eq("_id", rank.name), rankToDoc(rank), UPSERT);
                 this.data.ranks.put(rank.name, rank);
                 this.cachedSnapshot = null;
-            } catch (SQLException ex) {
-                rollback(connection);
+            } catch (Exception ex) {
                 throw new IOException("Unable to save rank", ex);
-            } finally {
-                safeAutoCommit(connection);
             }
         } finally {
             this.lock.writeLock().unlock();
@@ -135,94 +155,89 @@ public final class PermissionStore {
             if (normalized.equals(this.data.defaultRank)) {
                 throw new IllegalArgumentException("default rank cannot be deleted");
             }
-            Connection connection = getConnection();
             try {
-                connection.setAutoCommit(false);
-                try (PreparedStatement deleteRank = connection.prepareStatement("DELETE FROM ranks WHERE name = ?")) {
-                    deleteRank.setString(1, normalized);
-                    deleteRank.executeUpdate();
-                }
-                try (PreparedStatement deletePerms = connection.prepareStatement("DELETE FROM rank_permissions WHERE rank_name = ?")) {
-                    deletePerms.setString(1, normalized);
-                    deletePerms.executeUpdate();
-                }
+                // Remove main document
+                col(COL_RANKS).deleteOne(Filters.eq("_id", normalized));
+
+                // Remove from in-memory map first so cascade does not re-insert it
                 this.data.ranks.remove(normalized);
-                this.data.ranks.values().forEach(rank -> rank.parents.removeIf(parent -> parent.equals(normalized)));
-                this.data.users.values().forEach(user -> {
-                    user.ranks.removeIf(rank -> rank.equals(normalized));
+
+                // Cascade: remove from other ranks parent lists
+                MongoCollection<Document> ranksCol = col(COL_RANKS);
+                for (Rank rank : this.data.ranks.values()) {
+                    if (rank.parents.removeIf(p -> p.equals(normalized))) {
+                        ranksCol.replaceOne(Filters.eq("_id", rank.name), rankToDoc(rank), UPSERT);
+                    }
+                }
+
+                // Cascade: remove from users rank lists / reset primary rank
+                MongoCollection<Document> usersCol = col(COL_USERS);
+                for (UserEntry user : this.data.users.values()) {
+                    boolean changed = user.ranks.removeIf(r -> r.equals(normalized));
                     if (user.primaryRank.equals(normalized)) {
                         user.primaryRank = this.data.defaultRank;
+                        changed = true;
                     }
-                });
-                rewriteAll(connection, this.data);
-                connection.commit();
+                    if (changed) {
+                        usersCol.replaceOne(Filters.eq("_id", user.uuid), userToDoc(user), UPSERT);
+                    }
+                }
+
                 this.cachedSnapshot = null;
-            } catch (SQLException ex) {
-                rollback(connection);
-                this.data = reloadData(connection);
+            } catch (Exception ex) {
+                // Reload to keep in-memory state consistent with the database
+                try {
+                    this.data = readAll();
+                    this.data.ensureDefaults();
+                } catch (Exception ignored) {}
+                this.cachedSnapshot = null;
                 throw new IOException("Unable to delete rank", ex);
-            } finally {
-                safeAutoCommit(connection);
             }
         } finally {
             this.lock.writeLock().unlock();
         }
         fireChanged();
     }
+
+    // -------------------------------------------------------------------------
+    // User mutations
+    // -------------------------------------------------------------------------
 
     public void saveUser(UserEntry user) throws IOException {
         Objects.requireNonNull(user, "user");
         this.lock.writeLock().lock();
         try {
             user.sanitize();
-            UUID.fromString(user.uuid);
+            UUID.fromString(user.uuid); // validate UUID format
             if (user.primaryRank.isBlank()) {
                 user.primaryRank = this.data.defaultRank;
             }
             if (!user.ranks.contains(user.primaryRank)) {
                 user.ranks.add(user.primaryRank);
             }
-            Connection connection = getConnection();
             try {
-                connection.setAutoCommit(false);
-                writeUser(connection, user);
-                connection.commit();
+                col(COL_USERS).replaceOne(Filters.eq("_id", user.uuid), userToDoc(user), UPSERT);
                 this.data.users.put(user.uuid, user);
                 this.cachedSnapshot = null;
-            } catch (SQLException ex) {
-                rollback(connection);
+            } catch (Exception ex) {
                 throw new IOException("Unable to save user", ex);
-            } finally {
-                safeAutoCommit(connection);
             }
         } finally {
             this.lock.writeLock().unlock();
         }
         fireChanged();
+        fireUserSaved(user);
     }
 
     public void deleteUser(String uuid) throws IOException {
         this.lock.writeLock().lock();
         try {
-            Connection connection = getConnection();
             try {
-                connection.setAutoCommit(false);
-                try (PreparedStatement stmt = connection.prepareStatement("DELETE FROM user_permissions WHERE uuid = ?")) {
-                    stmt.setString(1, uuid);
-                    stmt.executeUpdate();
-                }
-                try (PreparedStatement stmt = connection.prepareStatement("DELETE FROM users WHERE uuid = ?")) {
-                    stmt.setString(1, uuid);
-                    stmt.executeUpdate();
-                }
-                connection.commit();
+                col(COL_USERS).deleteOne(Filters.eq("_id", uuid));
                 this.data.users.remove(uuid);
                 this.cachedSnapshot = null;
-            } catch (SQLException ex) {
-                rollback(connection);
+            } catch (Exception ex) {
                 throw new IOException("Unable to delete user", ex);
-            } finally {
-                safeAutoCommit(connection);
             }
         } finally {
             this.lock.writeLock().unlock();
@@ -231,17 +246,18 @@ public final class PermissionStore {
     }
 
     public void touchPlayer(UUID uuid, String name, boolean online) throws IOException {
+        UserEntry user;
         this.lock.writeLock().lock();
         try {
-            UserEntry user = this.data.users.computeIfAbsent(uuid.toString(), key -> {
+            user = this.data.users.computeIfAbsent(uuid.toString(), key -> {
                 UserEntry created = new UserEntry();
                 created.uuid = key;
                 created.primaryRank = this.data.defaultRank;
                 created.ranks.add(this.data.defaultRank);
                 return created;
             });
-            user.name = name == null ? user.name : name;
-            user.online = online;
+            user.name     = name == null ? user.name : name;
+            user.online   = online;
             user.lastSeen = Instant.now().toEpochMilli();
             user.sanitize();
             if (user.primaryRank.isBlank()) {
@@ -250,44 +266,31 @@ public final class PermissionStore {
             if (!user.ranks.contains(user.primaryRank)) {
                 user.ranks.add(user.primaryRank);
             }
-            Connection connection = getConnection();
             try {
-                connection.setAutoCommit(false);
-                writeUser(connection, user);
-                connection.commit();
+                col(COL_USERS).replaceOne(Filters.eq("_id", user.uuid), userToDoc(user), UPSERT);
                 this.cachedSnapshot = null;
-            } catch (SQLException ex) {
-                rollback(connection);
+            } catch (Exception ex) {
                 throw new IOException("Unable to update player", ex);
-            } finally {
-                safeAutoCommit(connection);
             }
         } finally {
             this.lock.writeLock().unlock();
         }
         fireChanged();
+        fireUserSaved(user);
     }
 
     public void setOnline(UUID uuid, boolean online) throws IOException {
         this.lock.writeLock().lock();
         try {
             UserEntry user = this.data.users.get(uuid.toString());
-            if (user == null) {
-                return;
-            }
-            user.online = online;
+            if (user == null) return;
+            user.online   = online;
             user.lastSeen = Instant.now().toEpochMilli();
-            Connection connection = getConnection();
             try {
-                connection.setAutoCommit(false);
-                writeUser(connection, user);
-                connection.commit();
+                col(COL_USERS).replaceOne(Filters.eq("_id", user.uuid), userToDoc(user), UPSERT);
                 this.cachedSnapshot = null;
-            } catch (SQLException ex) {
-                rollback(connection);
+            } catch (Exception ex) {
                 throw new IOException("Unable to update player online state", ex);
-            } finally {
-                safeAutoCommit(connection);
             }
         } finally {
             this.lock.writeLock().unlock();
@@ -295,35 +298,40 @@ public final class PermissionStore {
         fireOnlineChanged();
     }
 
+    // -------------------------------------------------------------------------
+    // Maintenance
+    // -------------------------------------------------------------------------
+
     public void cleanExpiredRules() throws IOException {
         this.lock.writeLock().lock();
         try {
             long now = System.currentTimeMillis();
             boolean changed = false;
             for (Rank rank : this.data.ranks.values()) {
-                changed |= rank.permissions.removeIf(r -> r.expiresAt != null && r.expiresAt > 0 && r.expiresAt <= now);
-            }
-            for (UserEntry user : this.data.users.values()) {
-                changed |= user.permissions.removeIf(r -> r.expiresAt != null && r.expiresAt > 0 && r.expiresAt <= now);
-            }
-            if (changed) {
-                Connection connection = getConnection();
-                try {
-                    connection.setAutoCommit(false);
-                    rewriteAll(connection, this.data);
-                    connection.commit();
-                    this.cachedSnapshot = null;
-                } catch (SQLException ex) {
-                    rollback(connection);
-                    throw new IOException("Unable to clean expired rules", ex);
-                } finally {
-                    safeAutoCommit(connection);
+                if (rank.permissions.removeIf(r -> r.expiresAt != null && r.expiresAt > 0 && r.expiresAt <= now)) {
+                    col(COL_RANKS).replaceOne(Filters.eq("_id", rank.name), rankToDoc(rank), UPSERT);
+                    changed = true;
                 }
             }
+            for (UserEntry user : this.data.users.values()) {
+                if (user.permissions.removeIf(r -> r.expiresAt != null && r.expiresAt > 0 && r.expiresAt <= now)) {
+                    col(COL_USERS).replaceOne(Filters.eq("_id", user.uuid), userToDoc(user), UPSERT);
+                    changed = true;
+                }
+            }
+            if (changed) {
+                this.cachedSnapshot = null;
+            }
+        } catch (Exception ex) {
+            throw new IOException("Unable to clean expired rules", ex);
         } finally {
             this.lock.writeLock().unlock();
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Listener registration
+    // -------------------------------------------------------------------------
 
     public void addChangeListener(Runnable listener) {
         this.listeners.add(listener);
@@ -333,324 +341,265 @@ public final class PermissionStore {
         this.onlineListeners.add(listener);
     }
 
-    private Connection openNewConnection() throws SQLException {
-        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + this.file.toAbsolutePath());
-        try (Statement statement = connection.createStatement()) {
-            statement.execute("PRAGMA foreign_keys = ON");
-            statement.execute("PRAGMA journal_mode = WAL");
-        }
-        return connection;
+    public void addUserSavedListener(Consumer<UserEntry> listener) {
+        this.userSavedListeners.add(listener);
     }
 
-    private Connection getConnection() throws IOException {
+    // -------------------------------------------------------------------------
+    // Export / Import
+    // -------------------------------------------------------------------------
+
+    /**
+     * Replaces ALL data in the database with the provided snapshot.
+     * Existing ranks, users, and settings are dropped and rebuilt.
+     */
+    public void importAll(PermissionData pd) throws IOException {
+        this.lock.writeLock().lock();
         try {
-            if (this.persistentConnection == null || this.persistentConnection.isClosed()) {
-                this.persistentConnection = openNewConnection();
+            pd.ensureDefaults();
+            col(COL_RANKS).drop();
+            col(COL_USERS).drop();
+            col(COL_SETTINGS).drop();
+            col(COL_SETTINGS).insertOne(new Document("_id", KEY_DEFAULT_RANK).append("value", pd.defaultRank));
+            col(COL_SETTINGS).insertOne(new Document("_id", KEY_SCHEMA_VERSION).append("value", pd.schemaVersion));
+            // Preserve the API key across imports
+            String existingApiKey = this.data != null ? getApiKeyInternal() : null;
+            if (existingApiKey != null) {
+                col(COL_SETTINGS).insertOne(new Document("_id", KEY_API_KEY).append("value", existingApiKey));
             }
-            return this.persistentConnection;
-        } catch (SQLException ex) {
-            throw new IOException("Unable to obtain database connection", ex);
-        }
-    }
-
-    private void closePersistentConnection() {
-        if (this.persistentConnection != null) {
-            try {
-                this.persistentConnection.close();
-            } catch (SQLException ignored) {
-            }
-            this.persistentConnection = null;
-        }
-    }
-
-    private static void rollback(Connection connection) {
-        try {
-            connection.rollback();
-        } catch (SQLException ignored) {
-        }
-    }
-
-    private static void safeAutoCommit(Connection connection) {
-        try {
-            connection.setAutoCommit(true);
-        } catch (SQLException ignored) {
-        }
-    }
-
-    private PermissionData reloadData(Connection connection) {
-        try {
-            PermissionData fresh = readAll(connection);
-            fresh.ensureDefaults();
+            for (Rank rank : pd.ranks.values()) col(COL_RANKS).insertOne(rankToDoc(rank));
+            for (UserEntry user : pd.users.values()) col(COL_USERS).insertOne(userToDoc(user));
+            this.data = pd;
             this.cachedSnapshot = null;
-            return fresh;
-        } catch (SQLException ex) {
-            return this.data;
+        } catch (Exception ex) {
+            try { this.data = readAll(); this.data.ensureDefaults(); } catch (Exception ignored) {}
+            this.cachedSnapshot = null;
+            throw new IOException("Unable to import data", ex);
+        } finally {
+            this.lock.writeLock().unlock();
+        }
+        fireChanged();
+    }
+
+    // -------------------------------------------------------------------------
+    // API Key
+    // -------------------------------------------------------------------------
+
+    public String getApiKey() {
+        this.lock.readLock().lock();
+        try {
+            return getApiKeyInternal();
+        } finally {
+            this.lock.readLock().unlock();
         }
     }
 
-    private static void migrate(Connection connection) throws SQLException {
-        try (Statement statement = connection.createStatement()) {
-            statement.execute("""
-                    CREATE TABLE IF NOT EXISTS settings (
-                        key TEXT PRIMARY KEY,
-                        value TEXT NOT NULL
-                    )
-                    """);
-            statement.execute("""
-                    CREATE TABLE IF NOT EXISTS ranks (
-                        name TEXT PRIMARY KEY,
-                        display_name TEXT NOT NULL,
-                        prefix TEXT NOT NULL,
-                        weight INTEGER NOT NULL,
-                        parents_json TEXT NOT NULL,
-                        meta_json TEXT NOT NULL
-                    )
-                    """);
-            statement.execute("""
-                    CREATE TABLE IF NOT EXISTS rank_permissions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        rank_name TEXT NOT NULL,
-                        node TEXT NOT NULL,
-                        value INTEGER NOT NULL,
-                        mode TEXT NOT NULL,
-                        expires_at INTEGER,
-                        contexts_json TEXT NOT NULL,
-                        position INTEGER NOT NULL,
-                        FOREIGN KEY(rank_name) REFERENCES ranks(name) ON DELETE CASCADE
-                    )
-                    """);
-            statement.execute("""
-                    CREATE TABLE IF NOT EXISTS users (
-                        uuid TEXT PRIMARY KEY,
-                        name TEXT NOT NULL,
-                        primary_rank TEXT NOT NULL,
-                        ranks_json TEXT NOT NULL,
-                        meta_json TEXT NOT NULL,
-                        last_seen INTEGER NOT NULL,
-                        online INTEGER NOT NULL
-                    )
-                    """);
-            statement.execute("""
-                    CREATE TABLE IF NOT EXISTS user_permissions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        uuid TEXT NOT NULL,
-                        node TEXT NOT NULL,
-                        value INTEGER NOT NULL,
-                        mode TEXT NOT NULL,
-                        expires_at INTEGER,
-                        contexts_json TEXT NOT NULL,
-                        position INTEGER NOT NULL,
-                        FOREIGN KEY(uuid) REFERENCES users(uuid) ON DELETE CASCADE
-                    )
-                    """);
+    public void setApiKey(String key) {
+        this.lock.writeLock().lock();
+        try {
+            col(COL_SETTINGS).replaceOne(
+                    Filters.eq("_id", KEY_API_KEY),
+                    new Document("_id", KEY_API_KEY).append("value", key),
+                    UPSERT);
+        } finally {
+            this.lock.writeLock().unlock();
         }
     }
 
-    private void writeDefaultsIfMissing(Connection connection) throws SQLException {
-        try (PreparedStatement setting = connection.prepareStatement("INSERT OR IGNORE INTO settings(key, value) VALUES('default_rank', ?)")) {
-            setting.setString(1, this.data.defaultRank);
-            setting.executeUpdate();
+    private String getApiKeyInternal() {
+        try {
+            Document doc = col(COL_SETTINGS).find(Filters.eq("_id", KEY_API_KEY)).first();
+            return doc != null ? doc.getString("value") : null;
+        } catch (Exception ex) {
+            return null;
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal: MongoDB I/O
+    // -------------------------------------------------------------------------
+
+    private MongoCollection<Document> col(String name) {
+        return this.database.getCollection(name);
+    }
+
+    private PermissionData readAll() {
+        PermissionData pd = new PermissionData();
+
+        // Settings
+        Document defaultRankDoc = col(COL_SETTINGS).find(Filters.eq("_id", KEY_DEFAULT_RANK)).first();
+        if (defaultRankDoc != null && defaultRankDoc.getString("value") != null) {
+            pd.defaultRank = defaultRankDoc.getString("value");
+        }
+        Document schemaDoc = col(COL_SETTINGS).find(Filters.eq("_id", KEY_SCHEMA_VERSION)).first();
+        if (schemaDoc != null) {
+            Object val = schemaDoc.get("value");
+            if (val instanceof Number n) pd.schemaVersion = n.intValue();
+        }
+
+        // Ranks
+        for (Document doc : col(COL_RANKS).find()) {
+            Rank rank = docToRank(doc);
+            pd.ranks.put(rank.name, rank);
+        }
+
+        // Users
+        for (Document doc : col(COL_USERS).find()) {
+            UserEntry user = docToUser(doc);
+            pd.users.put(user.uuid, user);
+        }
+
+        return pd;
+    }
+
+    private void writeDefaultsIfMissing() {
+        col(COL_SETTINGS).replaceOne(
+                Filters.eq("_id", KEY_DEFAULT_RANK),
+                new Document("_id", KEY_DEFAULT_RANK).append("value", this.data.defaultRank),
+                UPSERT);
+        col(COL_SETTINGS).replaceOne(
+                Filters.eq("_id", KEY_SCHEMA_VERSION),
+                new Document("_id", KEY_SCHEMA_VERSION).append("value", this.data.schemaVersion),
+                UPSERT);
+        // Persist ranks created by ensureDefaults (e.g. the default rank on first boot)
         for (Rank rank : this.data.ranks.values()) {
-            writeRank(connection, rank);
-        }
-    }
-
-    private static PermissionData readAll(Connection connection) throws SQLException {
-        PermissionData data = new PermissionData();
-        try (PreparedStatement statement = connection.prepareStatement("SELECT value FROM settings WHERE key = 'default_rank'");
-             ResultSet result = statement.executeQuery()) {
-            if (result.next()) {
-                data.defaultRank = result.getString(1);
+            Document existing = col(COL_RANKS).find(Filters.eq("_id", rank.name)).first();
+            if (existing == null) {
+                col(COL_RANKS).insertOne(rankToDoc(rank));
             }
         }
-        try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM ranks ORDER BY weight DESC, name ASC");
-             ResultSet result = statement.executeQuery()) {
-            while (result.next()) {
-                Rank rank = new Rank();
-                rank.name = result.getString("name");
-                rank.displayName = result.getString("display_name");
-                rank.prefix = result.getString("prefix");
-                rank.weight = result.getInt("weight");
-                rank.parents = fromJson(result.getString("parents_json"), STRING_LIST, new ArrayList<>());
-                rank.meta = fromJson(result.getString("meta_json"), STRING_MAP, new LinkedHashMap<>());
-                rank.permissions = readRankPermissions(connection, rank.name);
-                rank.sanitize();
-                data.ranks.put(rank.name, rank);
-            }
-        }
-        try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM users ORDER BY online DESC, name ASC");
-             ResultSet result = statement.executeQuery()) {
-            while (result.next()) {
-                UserEntry user = new UserEntry();
-                user.uuid = result.getString("uuid");
-                user.name = result.getString("name");
-                user.primaryRank = result.getString("primary_rank");
-                user.ranks = fromJson(result.getString("ranks_json"), STRING_LIST, new ArrayList<>());
-                user.meta = fromJson(result.getString("meta_json"), STRING_MAP, new LinkedHashMap<>());
-                user.lastSeen = result.getLong("last_seen");
-                user.online = result.getInt("online") != 0;
-                user.permissions = readUserPermissions(connection, user.uuid);
-                user.sanitize();
-                data.users.put(user.uuid, user);
-            }
-        }
-        data.ensureDefaults();
-        return data;
     }
 
-    private static List<PermissionRule> readRankPermissions(Connection connection, String rankName) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM rank_permissions WHERE rank_name = ? ORDER BY position ASC, id ASC")) {
-            statement.setString(1, rankName);
-            return readRules(statement);
-        }
+    // -------------------------------------------------------------------------
+    // Internal: Document <-> Model mapping
+    // -------------------------------------------------------------------------
+
+    private static Document rankToDoc(Rank rank) {
+        List<Document> perms = new ArrayList<>(rank.permissions.size());
+        for (PermissionRule rule : rank.permissions) perms.add(ruleToDoc(rule));
+        return new Document("_id", rank.name)
+                .append("displayName", rank.displayName)
+                .append("prefix",      rank.prefix)
+                .append("weight",      rank.weight)
+                .append("parents",     rank.parents)
+                .append("permissions", perms)
+                .append("meta",        new Document(rank.meta));
     }
 
-    private static List<PermissionRule> readUserPermissions(Connection connection, String uuid) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM user_permissions WHERE uuid = ? ORDER BY position ASC, id ASC")) {
-            statement.setString(1, uuid);
-            return readRules(statement);
+    private static Rank docToRank(Document doc) {
+        Rank rank = new Rank();
+        rank.name        = doc.getString("_id");
+        rank.displayName = doc.getString("displayName");
+        rank.prefix      = doc.getString("prefix");
+        rank.weight      = intFrom(doc.get("weight"), 0);
+        rank.parents     = doc.getList("parents", String.class, new ArrayList<>());
+
+        Document meta = doc.get("meta", Document.class);
+        if (meta != null) {
+            rank.meta = new LinkedHashMap<>();
+            meta.forEach((k, v) -> rank.meta.put(k, v != null ? v.toString() : null));
         }
+
+        List<Document> perms = doc.getList("permissions", Document.class, new ArrayList<>());
+        rank.permissions = new ArrayList<>(perms.size());
+        for (Document p : perms) rank.permissions.add(docToRule(p));
+        return rank;
     }
 
-    private static List<PermissionRule> readRules(PreparedStatement statement) throws SQLException {
-        List<PermissionRule> rules = new ArrayList<>();
-        try (ResultSet result = statement.executeQuery()) {
-            while (result.next()) {
-                PermissionRule rule = new PermissionRule();
-                rule.node = result.getString("node");
-                rule.value = result.getInt("value") != 0;
-                rule.mode = result.getString("mode");
-                long expiresAt = result.getLong("expires_at");
-                rule.expiresAt = result.wasNull() ? null : expiresAt;
-                rule.contexts = fromJson(result.getString("contexts_json"), STRING_MAP, new LinkedHashMap<>());
-                rule.sanitize();
-                rules.add(rule);
-            }
-        }
-        return rules;
+    private static Document userToDoc(UserEntry user) {
+        List<Document> perms = new ArrayList<>(user.permissions.size());
+        for (PermissionRule rule : user.permissions) perms.add(ruleToDoc(rule));
+        return new Document("_id", user.uuid)
+                .append("name",        user.name)
+                .append("primaryRank", user.primaryRank)
+                .append("ranks",       user.ranks)
+                .append("permissions", perms)
+                .append("meta",        new Document(user.meta))
+                .append("lastSeen",    user.lastSeen)
+                .append("online",      user.online);
     }
 
-    private static void writeRank(Connection connection, Rank rank) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO ranks(name, display_name, prefix, weight, parents_json, meta_json)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(name) DO UPDATE SET
-                    display_name = excluded.display_name,
-                    prefix = excluded.prefix,
-                    weight = excluded.weight,
-                    parents_json = excluded.parents_json,
-                    meta_json = excluded.meta_json
-                """)) {
-            statement.setString(1, rank.name);
-            statement.setString(2, rank.displayName);
-            statement.setString(3, rank.prefix);
-            statement.setInt(4, rank.weight);
-            statement.setString(5, GSON.toJson(rank.parents));
-            statement.setString(6, GSON.toJson(rank.meta));
-            statement.executeUpdate();
+    private static UserEntry docToUser(Document doc) {
+        UserEntry user = new UserEntry();
+        user.uuid        = doc.getString("_id");
+        user.name        = doc.getString("name");
+        user.primaryRank = doc.getString("primaryRank");
+        user.ranks       = doc.getList("ranks", String.class, new ArrayList<>());
+        user.lastSeen    = longFrom(doc.get("lastSeen"), 0L);
+        user.online      = Boolean.TRUE.equals(doc.getBoolean("online"));
+
+        Document meta = doc.get("meta", Document.class);
+        if (meta != null) {
+            user.meta = new LinkedHashMap<>();
+            meta.forEach((k, v) -> user.meta.put(k, v != null ? v.toString() : null));
         }
-        try (PreparedStatement delete = connection.prepareStatement("DELETE FROM rank_permissions WHERE rank_name = ?")) {
-            delete.setString(1, rank.name);
-            delete.executeUpdate();
-        }
-        try (PreparedStatement insert = connection.prepareStatement("""
-                INSERT INTO rank_permissions(rank_name, node, value, mode, expires_at, contexts_json, position)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """)) {
-            writeRules(insert, rank.name, rank.permissions);
-        }
+
+        List<Document> perms = doc.getList("permissions", Document.class, new ArrayList<>());
+        user.permissions = new ArrayList<>(perms.size());
+        for (Document p : perms) user.permissions.add(docToRule(p));
+        return user;
     }
 
-    private static void writeUser(Connection connection, UserEntry user) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO users(uuid, name, primary_rank, ranks_json, meta_json, last_seen, online)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(uuid) DO UPDATE SET
-                    name = excluded.name,
-                    primary_rank = excluded.primary_rank,
-                    ranks_json = excluded.ranks_json,
-                    meta_json = excluded.meta_json,
-                    last_seen = excluded.last_seen,
-                    online = excluded.online
-                """)) {
-            statement.setString(1, user.uuid);
-            statement.setString(2, user.name);
-            statement.setString(3, user.primaryRank);
-            statement.setString(4, GSON.toJson(user.ranks));
-            statement.setString(5, GSON.toJson(user.meta));
-            statement.setLong(6, user.lastSeen);
-            statement.setInt(7, user.online ? 1 : 0);
-            statement.executeUpdate();
-        }
-        try (PreparedStatement delete = connection.prepareStatement("DELETE FROM user_permissions WHERE uuid = ?")) {
-            delete.setString(1, user.uuid);
-            delete.executeUpdate();
-        }
-        try (PreparedStatement insert = connection.prepareStatement("""
-                INSERT INTO user_permissions(uuid, node, value, mode, expires_at, contexts_json, position)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """)) {
-            writeRules(insert, user.uuid, user.permissions);
-        }
+    private static Document ruleToDoc(PermissionRule rule) {
+        Document doc = new Document("node",     rule.node)
+                .append("value",    rule.value)
+                .append("mode",     rule.mode)
+                .append("contexts", new Document(rule.contexts));
+        if (rule.expiresAt != null) doc.append("expiresAt", rule.expiresAt);
+        return doc;
     }
 
-    private static void writeRules(PreparedStatement statement, String owner, List<PermissionRule> rules) throws SQLException {
-        for (int i = 0; i < rules.size(); i++) {
-            PermissionRule rule = rules.get(i);
-            rule.sanitize();
-            statement.setString(1, owner);
-            statement.setString(2, rule.node);
-            statement.setInt(3, rule.value ? 1 : 0);
-            statement.setString(4, rule.mode);
-            if (rule.expiresAt == null) {
-                statement.setNull(5, java.sql.Types.INTEGER);
-            } else {
-                statement.setLong(5, rule.expiresAt);
-            }
-            statement.setString(6, GSON.toJson(rule.contexts));
-            statement.setInt(7, i);
-            statement.addBatch();
+    private static PermissionRule docToRule(Document doc) {
+        PermissionRule rule = new PermissionRule();
+        rule.node      = doc.getString("node");
+        rule.value     = Boolean.TRUE.equals(doc.getBoolean("value"));
+        rule.mode      = doc.getString("mode");
+        rule.expiresAt = longFrom(doc.get("expiresAt"), Long.MIN_VALUE);
+        if (rule.expiresAt == Long.MIN_VALUE) rule.expiresAt = null;
+
+        Document ctx = doc.get("contexts", Document.class);
+        if (ctx != null) {
+            rule.contexts = new LinkedHashMap<>();
+            ctx.forEach((k, v) -> rule.contexts.put(k, v != null ? v.toString() : null));
         }
-        statement.executeBatch();
+        return rule;
     }
 
-    private static void rewriteAll(Connection connection, PermissionData data) throws SQLException {
-        try (Statement statement = connection.createStatement()) {
-            statement.executeUpdate("DELETE FROM rank_permissions");
-            statement.executeUpdate("DELETE FROM user_permissions");
-            statement.executeUpdate("DELETE FROM ranks");
-            statement.executeUpdate("DELETE FROM users");
-        }
-        try (PreparedStatement setting = connection.prepareStatement("INSERT OR REPLACE INTO settings(key, value) VALUES('default_rank', ?)")) {
-            setting.setString(1, data.defaultRank);
-            setting.executeUpdate();
-        }
-        for (Rank rank : data.ranks.values()) {
-            writeRank(connection, rank);
-        }
-        for (UserEntry user : data.users.values()) {
-            writeUser(connection, user);
-        }
+    // -------------------------------------------------------------------------
+    // Internal: type-safe BSON number helpers
+    // -------------------------------------------------------------------------
+
+    private static int intFrom(Object value, int def) {
+        if (value instanceof Number n) return n.intValue();
+        return def;
     }
 
-    private static <T> T fromJson(String json, Type type, T fallback) {
-        if (json == null || json.isBlank()) {
-            return fallback;
-        }
-        T value = GSON.fromJson(json, type);
-        return value == null ? fallback : value;
+    private static long longFrom(Object value, long def) {
+        if (value instanceof Number n) return n.longValue();
+        return def;
     }
+
+    // -------------------------------------------------------------------------
+    // Internal: event broadcasting
+    // -------------------------------------------------------------------------
 
     private void fireChanged() {
-        for (Runnable listener : this.listeners) {
-            listener.run();
-        }
+        for (Runnable l : this.listeners) l.run();
     }
 
     private void fireOnlineChanged() {
-        for (Runnable listener : this.onlineListeners) {
-            listener.run();
-        }
+        for (Runnable l : this.onlineListeners) l.run();
+    }
+
+    private void fireUserSaved(UserEntry user) {
+        for (Consumer<UserEntry> l : this.userSavedListeners) l.accept(user);
+    }
+
+    // -------------------------------------------------------------------------
+    // Package-private: used by AuditLog and RankHistoryLog
+    // -------------------------------------------------------------------------
+
+    MongoDatabase database() {
+        return this.database;
     }
 }

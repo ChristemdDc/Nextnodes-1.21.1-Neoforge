@@ -1,71 +1,166 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Nextnodes - Panel de Permisos</title>
-  <link rel="stylesheet" href="/web/styles.css">
+  <title>Nextnodes — Panel de Permisos</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" onerror="">
-  <style>@font-face{font-family:'Inter';src:local('Inter'),local('Segoe UI'),local('Helvetica Neue'),local('Arial');font-display:swap}</style>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/web/styles.css">
 </head>
 <body>
-  <div class="space-bg">
-    <div class="stars"></div>
-    <div class="stars stars-2"></div>
-    <div class="stars stars-3"></div>
-    <div class="nebula nebula-1"></div>
-    <div class="nebula nebula-2"></div>
-    <div class="planet planet-1"></div>
-    <div class="planet planet-2"></div>
-    <div class="shooting-star"></div>
-    <div class="shooting-star shooting-star-2"></div>
-    <div class="shooting-star shooting-star-3"></div>
+
+  <!-- ░░ ANIMATED BACKGROUND ░░ -->
+  <div class="bg-canvas" aria-hidden="true">
+    <div class="bg-blob bg-blob-1"></div>
+    <div class="bg-blob bg-blob-2"></div>
+    <div class="bg-blob bg-blob-3"></div>
+    <div class="bg-grid"></div>
   </div>
 
+  <!-- ░░ LOGIN ░░ -->
   <div id="login" class="login">
     <div class="loginBox">
       <div class="loginGlow"></div>
-      <div class="brandLine"><div class="logoMark"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5"/><line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="8.5" x2="22" y2="8.5"/><line x1="2" y1="15.5" x2="22" y2="15.5"/></svg></div><div><h1>Nextnodes</h1><div class="muted">Panel de control de permisos</div></div></div>
-      <label>Contraseña <input id="password" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter') login()"></label>
-      <button class="primary" onclick="login()"><span>Entrar al panel</span></button>
-      <div id="loginError" class="status"></div>
+      <div class="login-brand">
+        <div class="logoMark">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8">
+            <polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5"/>
+            <line x1="12" y1="2" x2="12" y2="22"/>
+            <line x1="2" y1="8.5" x2="22" y2="8.5"/>
+            <line x1="2" y1="15.5" x2="22" y2="15.5"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="login-title">Nextnodes</h1>
+          <p class="login-sub">Panel de administración de permisos</p>
+        </div>
+      </div>
+      <div class="login-sep"></div>
+      <label class="login-field-label">
+        Contraseña de sesión
+        <div class="login-input-wrap">
+          <svg class="login-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <input id="password" type="password" class="login-input" placeholder="Introduce la contraseña…" autocomplete="current-password" onkeydown="if(event.key==='Enter') login()">
+        </div>
+      </label>
+      <button class="login-btn primary" onclick="login()">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5">
+          <line x1="5" y1="12" x2="19" y2="12"/>
+          <polyline points="12 5 19 12 12 19"/>
+        </svg>
+        Acceder al panel
+      </button>
+      <div id="loginError" class="login-error status"></div>
     </div>
   </div>
 
+  <!-- ░░ APP ░░ -->
   <div id="app" class="app hidden">
+
+    <!-- Sidebar -->
     <aside class="rail">
       <div class="railTop">
-        <button class="collapseBtn primary" onclick="toggleRail()" title="Plegar panel"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5"/></svg></button>
-        <div class="brandCopy"><strong>Nextnodes</strong><span>Permisos del servidor</span></div>
+        <button class="collapseBtn" onclick="toggleRail()" title="Plegar panel">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2">
+            <polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5"/>
+          </svg>
+        </button>
+        <div class="brandCopy">
+          <strong>Nextnodes</strong>
+          <span>Permisos del servidor</span>
+        </div>
       </div>
+
       <nav class="nav">
-        <button id="tabOverview" class="active" onclick="showTab('overview')" title="Resumen"><span class="navIcon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span><span class="navLabel">Resumen</span><span class="navCount">inicio</span></button>
-        <button id="tabUsers" onclick="showTab('users')" title="Jugadores"><span class="navIcon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="navLabel">Jugadores</span><span class="navCount" id="navUsers">0</span></button>
-        <button id="tabRanks" onclick="showTab('ranks')" title="Rangos"><span class="navIcon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></span><span class="navLabel">Rangos</span><span class="navCount" id="navRanks">0</span></button>
-        <button id="tabCommands" onclick="showTab('commands')" title="Comandos"><span class="navIcon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span><span class="navLabel">Comandos</span><span class="navCount" id="navCommands">0</span></button>
+        <button id="tabOverview" class="active" onclick="showTab('overview')" title="Resumen">
+          <span class="navIcon">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+              <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+              <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+              <rect x="14" y="14" width="7" height="7" rx="1.5"/>
+            </svg>
+          </span>
+          <span class="navLabel">Resumen</span>
+          <span class="navCount">Inicio</span>
+        </button>
+        <button id="tabUsers" onclick="showTab('users')" title="Jugadores">
+          <span class="navIcon">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </span>
+          <span class="navLabel">Jugadores</span>
+          <span class="navCount" id="navUsers">0</span>
+        </button>
+        <button id="tabRanks" onclick="showTab('ranks')" title="Rangos">
+          <span class="navIcon">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+            </svg>
+          </span>
+          <span class="navLabel">Rangos</span>
+          <span class="navCount" id="navRanks">0</span>
+        </button>
+        <button id="tabCommands" onclick="showTab('commands')" title="Comandos">
+          <span class="navIcon">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="4 17 10 11 4 5"/>
+              <line x1="12" y1="19" x2="20" y2="19"/>
+            </svg>
+          </span>
+          <span class="navLabel">Comandos</span>
+          <span class="navCount" id="navCommands">0</span>
+        </button>
       </nav>
-      <div></div>
+
+      <div class="rail-spacer"></div>
+
       <div class="sessionInfo" id="sessionInfo" style="display:none">
-        <div class="sessionBar"><div class="sessionBarFill" id="sessionBarFill"></div></div>
+        <div class="sessionBar">
+          <div class="sessionBarFill" id="sessionBarFill"></div>
+        </div>
         <span class="sessionText" id="sessionText"></span>
       </div>
-      <div class="status"><span class="onlineDot on"></span> <span class="statusText" id="status">Conectando...</span></div>
+
+      <div class="rail-foot status">
+        <span class="onlineDot on"></span>
+        <span class="statusText" id="status">Conectando…</span>
+      </div>
     </aside>
+
+    <!-- Main -->
     <main class="main">
-      <header>
-        <div><h1 id="pageTitle">Resumen</h1><div class="muted" id="pageHint">Control general del servidor.</div></div>
-        <button class="ghost" onclick="load()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Actualizar</button>
+      <header class="top-bar">
+        <div>
+          <h1 id="pageTitle">Resumen</h1>
+          <p class="muted" id="pageHint">Control general del servidor.</p>
+        </div>
+        <button class="ghost" onclick="load()">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"/>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+          Actualizar
+        </button>
       </header>
       <div class="content">
-        <section id="overviewView" class="stack"></section>
-        <section id="usersView" class="stack hidden"></section>
-        <section id="ranksView" class="stack hidden"></section>
+        <section id="overviewView"  class="stack"></section>
+        <section id="usersView"    class="stack hidden"></section>
+        <section id="ranksView"    class="stack hidden"></section>
         <section id="commandsView" class="stack hidden"></section>
       </div>
     </main>
-  </div>
+
+  </div><!-- /#app -->
 
   <script src="/web/app.js"></script>
 </body>
