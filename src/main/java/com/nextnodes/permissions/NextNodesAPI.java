@@ -68,16 +68,27 @@ public final class NextNodesAPI {
 
     /**
      * Returns the primary rank name of the player, or the default rank if none is set.
+     * If primaryRank is explicitly set, that is returned.
+     * Otherwise, the highest-weight rank from the player's ranks list is returned,
+     * matching the same rank resolution order used for prefix display.
      * Equivalent to LuckPerms User.getPrimaryGroup().
      */
     public static String getPlayerPrimaryRank(UUID uuid) {
         if (!isAvailable()) return getDefaultRank();
         PermissionData data = instance.store().snapshot();
         UserEntry user = data.users.get(uuid.toString());
-        if (user == null || user.primaryRank == null || user.primaryRank.isBlank()) {
+        if (user == null) {
             return data.defaultRank;
         }
-        return user.primaryRank;
+        // Prefer any non-default rank (highest weight) over the default rank.
+        // primaryRank alone is not reliable because rank assignment via the web panel or commands
+        // adds ranks to the list without updating primaryRank away from "default".
+        String best = user.ranks.stream()
+                .filter(r -> !r.equals(data.defaultRank) && data.ranks.containsKey(r))
+                .max(java.util.Comparator.comparingInt(r -> data.ranks.get(r).weight))
+                .orElse(null);
+        if (best != null) return best;
+        return user.primaryRank != null && !user.primaryRank.isBlank() ? user.primaryRank : data.defaultRank;
     }
 
     /**
@@ -150,5 +161,23 @@ public final class NextNodesAPI {
     public static void addPlayerStatusListener(Runnable listener) {
         if (!isAvailable()) return;
         instance.store().addOnlineChangeListener(listener);
+    }
+
+    /**
+     * Registers a listener that fires whenever a specific player's data is saved
+     * (rank assignment, meta changes, etc.). The UUID of the affected player is provided.
+     *
+     * This is more precise than addChangeListener: it targets only the player whose
+     * data changed, allowing immediate per-player sync without polling all online players.
+     *
+     * @param listener called with the UUID of the player whose data was saved
+     */
+    public static void addPlayerSavedListener(java.util.function.Consumer<UUID> listener) {
+        if (!isAvailable()) return;
+        instance.store().addUserSavedListener(user -> {
+            try {
+                listener.accept(UUID.fromString(user.uuid));
+            } catch (Exception ignored) {}
+        });
     }
 }

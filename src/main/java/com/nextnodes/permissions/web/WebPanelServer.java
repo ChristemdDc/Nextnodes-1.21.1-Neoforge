@@ -5,6 +5,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.nextnodes.permissions.AuditLog;
 import com.nextnodes.permissions.CommandCatalog.CommandInfo;
+import com.nextnodes.permissions.PermissionModels;
 import com.nextnodes.permissions.PermissionModels.PermissionData;
 import com.nextnodes.permissions.PermissionModels.Rank;
 import com.nextnodes.permissions.PermissionModels.UserEntry;
@@ -324,6 +325,19 @@ public final class WebPanelServer implements AutoCloseable {
                     for (Document doc : this.historyLog.forPlayer(uuid, limit)) arr.add(docToJson(doc));
                 }
                 send(exchange, 200, "application/json; charset=utf-8", GSON.toJson(arr));
+                return;
+            }
+            // --- tab list settings ---
+            if (path.equals("/api/settings/tab") && method.equals("GET")) {
+                sendJson(exchange, 200, GSON.toJsonTree(this.store.getTabSettings()).getAsJsonObject());
+                return;
+            }
+            if (path.equals("/api/settings/tab") && method.equals("PUT")) {
+                PermissionModels.TabSettings ts = GSON.fromJson(readBody(exchange), PermissionModels.TabSettings.class);
+                if (ts == null) { sendJson(exchange, 400, error("JSON inválido")); return; }
+                this.store.saveTabSettings(ts);
+                if (this.auditLog != null) this.auditLog.log("web-panel", "web-panel", "tabsettings.save", "", "", "showPing=" + ts.showPing + " showHead=" + ts.showHead);
+                sendJson(exchange, 200, ok());
                 return;
             }
             // --- API key management ---

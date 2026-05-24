@@ -35,13 +35,15 @@ public final class PermissionStore {
     private static final String KEY_DEFAULT_RANK   = "defaultRank";
     private static final String KEY_SCHEMA_VERSION = "schemaVersion";
     private static final String KEY_API_KEY        = "apiKey";
+    private static final String KEY_TAB_SETTINGS   = "tabSettings";
 
     private static final ReplaceOptions UPSERT = new ReplaceOptions().upsert(true);
 
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
-    private final CopyOnWriteArrayList<Runnable>           listeners            = new CopyOnWriteArrayList<>();
-    private final CopyOnWriteArrayList<Runnable>           onlineListeners      = new CopyOnWriteArrayList<>();
-    private final CopyOnWriteArrayList<Consumer<UserEntry>> userSavedListeners  = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<Runnable>           listeners             = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<Runnable>           onlineListeners       = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<Consumer<UserEntry>> userSavedListeners   = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<Runnable>           tabSettingsListeners  = new CopyOnWriteArrayList<>();
 
     private final String connectionUri;
     private final String databaseName;
@@ -345,6 +347,10 @@ public final class PermissionStore {
         this.userSavedListeners.add(listener);
     }
 
+    public void addTabSettingsListener(Runnable listener) {
+        this.tabSettingsListeners.add(listener);
+    }
+
     // -------------------------------------------------------------------------
     // Export / Import
     // -------------------------------------------------------------------------
@@ -449,7 +455,52 @@ public final class PermissionStore {
             pd.users.put(user.uuid, user);
         }
 
+        // Tab settings
+        Document tabSettingsDoc = col(COL_SETTINGS).find(Filters.eq("_id", KEY_TAB_SETTINGS)).first();
+        if (tabSettingsDoc != null) {
+            String json = tabSettingsDoc.getString("value");
+            if (json != null) {
+                try {
+                    PermissionModels.TabSettings ts = GSON.fromJson(json, PermissionModels.TabSettings.class);
+                    if (ts != null) pd.tabSettings = ts;
+                } catch (Exception ignored) {}
+            }
+        }
+
         return pd;
+    }
+
+    // -------------------------------------------------------------------------
+    // Tab settings
+    // -------------------------------------------------------------------------
+
+    public PermissionModels.TabSettings getTabSettings() {
+        this.lock.readLock().lock();
+        try {
+            return this.data.tabSettings != null ? this.data.tabSettings : new PermissionModels.TabSettings();
+        } finally {
+            this.lock.readLock().unlock();
+        }
+    }
+
+    public void saveTabSettings(PermissionModels.TabSettings settings) throws IOException {
+        Objects.requireNonNull(settings, "settings");
+        this.lock.writeLock().lock();
+        try {
+            String json = GSON.toJson(settings);
+            col(COL_SETTINGS).replaceOne(
+                    Filters.eq("_id", KEY_TAB_SETTINGS),
+                    new Document("_id", KEY_TAB_SETTINGS).append("value", json),
+                    UPSERT);
+            this.data.tabSettings = settings;
+            this.cachedSnapshot = null;
+        } catch (Exception ex) {
+            throw new IOException("Unable to save tab settings", ex);
+        } finally {
+            this.lock.writeLock().unlock();
+        }
+        fireChanged();
+        fireTabSettingsChanged();
     }
 
     private void writeDefaultsIfMissing() {
@@ -593,6 +644,10 @@ public final class PermissionStore {
 
     private void fireUserSaved(UserEntry user) {
         for (Consumer<UserEntry> l : this.userSavedListeners) l.accept(user);
+    }
+
+    private void fireTabSettingsChanged() {
+        for (Runnable l : this.tabSettingsListeners) l.run();
     }
 
     // -------------------------------------------------------------------------

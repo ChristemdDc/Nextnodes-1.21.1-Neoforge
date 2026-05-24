@@ -169,19 +169,35 @@ public final class PermissionResolver {
 
     private static List<Rank> rankOrder(PermissionData data, UserEntry user) {
         List<Rank> roots = new ArrayList<>();
-        if (!user.primaryRank.isBlank()) {
+
+        // primaryRank earns stable-sort priority only when it is NOT the default rank.
+        // Many users have primaryRank="default" even when they hold non-default ranks,
+        // so giving "default" an unconditional head-start would hide higher-weight ranks.
+        boolean primaryIsDefault = user.primaryRank.isBlank() || user.primaryRank.equals(data.defaultRank);
+        if (!primaryIsDefault) {
             Rank primary = data.ranks.get(user.primaryRank);
             if (primary != null) {
                 roots.add(primary);
             }
         }
+
+        // Collect remaining non-default ranks from the user's rank list.
         for (String rankName : user.ranks) {
+            if (rankName.equals(data.defaultRank)) continue;
             Rank rank = data.ranks.get(rankName);
             if (rank != null && roots.stream().noneMatch(existing -> existing.name.equals(rank.name))) {
                 roots.add(rank);
             }
         }
+
+        // Sort non-default roots by weight descending (primaryRank is first, wins ties).
         roots.sort(Comparator.comparingInt((Rank rank) -> rank.weight).reversed());
+
+        // Always append the default rank at the end so its permissions / prefix act as a fallback.
+        Rank defaultRank = data.ranks.get(data.defaultRank);
+        if (defaultRank != null && roots.stream().noneMatch(r -> r.name.equals(defaultRank.name))) {
+            roots.add(defaultRank);
+        }
 
         List<Rank> ordered = new ArrayList<>();
         Set<String> seen = new HashSet<>();

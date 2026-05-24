@@ -14,10 +14,19 @@ import net.neoforged.api.distmarker.Dist;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.synchronization.SuggestionProviders;
+import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.numbers.FixedFormat;
 import net.minecraft.network.protocol.game.ClientboundCommandsPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.GameType;
+import net.minecraft.world.scores.DisplaySlot;
+import net.minecraft.world.scores.Objective;
+import net.minecraft.world.scores.ScoreAccess;
+import net.minecraft.world.scores.Scoreboard;
+import net.minecraft.world.scores.criteria.ObjectiveCriteria;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.neoforge.common.NeoForge;
@@ -32,7 +41,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -40,6 +52,8 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @Mod(NextNodesPermissions.MOD_ID)
 public final class NextNodesPermissions {
@@ -47,6 +61,7 @@ public final class NextNodesPermissions {
     private static final Logger LOGGER = LoggerFactory.getLogger(NextNodesPermissions.class);
 
     private static final Set<String> HIDDEN_COMMANDS = Set.of();
+    private static final String PING_OBJECTIVE = "nn_ping";
     private static final ExecutorService DB_EXECUTOR = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "nextnodes-db");
         t.setDaemon(true);
@@ -62,6 +77,7 @@ public final class NextNodesPermissions {
     private final Map<UUID, String> prevPrimaryRanks = new ConcurrentHashMap<>();
     private MinecraftServer server;
     private WebPanelServer webPanel;
+    private ScheduledExecutorService pingScheduler;
 
     public NextNodesPermissions() {
         if (FMLEnvironment.dist == Dist.CLIENT) {
@@ -84,6 +100,14 @@ public final class NextNodesPermissions {
         this.store.addChangeListener(this::refreshOnlinePlayers);
         this.store.addOnlineChangeListener(this::refreshOnlinePlayerNames);
         this.store.addUserSavedListener(this::onUserSaved);
+        this.store.addTabSettingsListener(this::applyTabListing);
+        this.store.addTabSettingsListener(this::tickPingScoreboard);
+        this.pingScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "nextnodes-ping");
+            t.setDaemon(true);
+            return t;
+        });
+        this.pingScheduler.scheduleAtFixedRate(this::tickPingScoreboard, 3, 2, TimeUnit.SECONDS);
         try {
             this.store.load();
         } catch (IOException ex) {
@@ -165,6 +189,19 @@ public final class NextNodesPermissions {
 
     @net.neoforged.bus.api.SubscribeEvent
     public void onServerStopping(ServerStoppingEvent event) {
+        if (this.pingScheduler != null) {
+            this.pingScheduler.shutdownNow();
+            this.pingScheduler = null;
+        }
+        // Remove ping objective on shutdown
+        if (this.server != null) {
+            Scoreboard sb = this.server.getScoreboard();
+            Objective obj = sb.getObjective(PING_OBJECTIVE);
+            if (obj != null) {
+                sb.setDisplayObjective(DisplaySlot.LIST, null);
+                sb.removeObjective(obj);
+            }
+        }
         if (this.webPanel != null) {
             this.webPanel.close();
             this.webPanel = null;
@@ -187,7 +224,13 @@ public final class NextNodesPermissions {
             if (currentServer != null) {
                 currentServer.execute(() -> {
                     ServerPlayer player = currentServer.getPlayerList().getPlayer(uuid);
-                    if (player != null) refreshPlayer(player);
+                    if (player != null) {
+                        refreshPlayer(player);
+                        // Apply tab listing state for the newly joined player
+                        if (!this.store.getTabSettings().showHead) {
+                            applyTabListing();
+                        }
+                    }
                 });
             }
         });
@@ -221,8 +264,59 @@ public final class NextNodesPermissions {
     @net.neoforged.bus.api.SubscribeEvent
     public void onTabListName(PlayerEvent.TabListNameFormat event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            event.setDisplayName(PrefixFormatter.prefixedName(this.resolver.resolvePrefix(player.getUUID()), Component.literal(player.getGameProfile().getName())));
+            Component name = PrefixFormatter.prefixedName(
+                    this.resolver.resolvePrefix(player.getUUID()),
+                    Component.literal(player.getGameProfile().getName()));
+            event.setDisplayName(name);
         }
+    }
+
+    /**
+     * Creates/removes the "nn_ping" scoreboard objective shown at DisplaySlot.LIST
+     * (right side of each tab entry, right before the signal bars) and updates
+     * each player's score with their current latency using a colored FixedFormat.
+     * Called every 2 s by the scheduler and immediately on tab settings change.
+     */
+    private void tickPingScoreboard() {
+        MinecraftServer srv = this.server;
+        if (srv == null) return;
+        srv.execute(() -> {
+            PermissionModels.TabSettings settings = this.store.getTabSettings();
+            Scoreboard sb = srv.getScoreboard();
+            Objective obj = sb.getObjective(PING_OBJECTIVE);
+
+            if (!settings.showPing) {
+                if (obj != null) {
+                    sb.setDisplayObjective(DisplaySlot.LIST, null);
+                    sb.removeObjective(obj);
+                }
+                return;
+            }
+
+            if (obj == null) {
+                obj = sb.addObjective(
+                        PING_OBJECTIVE,
+                        ObjectiveCriteria.DUMMY,
+                        Component.empty(),
+                        ObjectiveCriteria.RenderType.INTEGER,
+                        false,
+                        null
+                );
+                sb.setDisplayObjective(DisplaySlot.LIST, obj);
+            }
+
+            for (ServerPlayer player : srv.getPlayerList().getPlayers()) {
+                if (player.connection == null) continue;
+                int latency = player.connection.latency();
+                ChatFormatting pingColor = latency < 100 ? ChatFormatting.GREEN
+                        : latency < 200 ? ChatFormatting.YELLOW
+                        : ChatFormatting.RED;
+                Component pingComp = Component.literal(latency + "ms").withStyle(pingColor);
+                ScoreAccess score = sb.getOrCreatePlayerScore(player, obj);
+                score.set(latency);
+                score.numberFormatOverride(new FixedFormat(pingComp));
+            }
+        });
     }
 
     @net.neoforged.bus.api.SubscribeEvent
@@ -333,6 +427,48 @@ public final class NextNodesPermissions {
             return;
         }
         currentServer.execute(() -> currentServer.getPlayerList().getPlayers().forEach(this::refreshPlayerName));
+    }
+
+    /**
+     * Broadcasts UPDATE_LISTED packets to all connected clients to show/hide
+     * players in the vanilla TAB list according to the showHead setting.
+     * When listed=false, builds entries via reflection since there is no public
+     * ClientboundPlayerInfoUpdatePacket(EnumSet, List<Entry>) constructor.
+     */
+    private void applyTabListing() {
+        MinecraftServer currentServer = this.server;
+        if (currentServer == null) return;
+        currentServer.execute(() -> {
+            boolean listed = this.store.getTabSettings().showHead;
+            List<ServerPlayer> players = new ArrayList<>(currentServer.getPlayerList().getPlayers());
+            if (players.isEmpty()) return;
+            ClientboundPlayerInfoUpdatePacket packet = buildListedPacket(players, listed);
+            for (ServerPlayer viewer : players) {
+                if (viewer.connection != null) viewer.connection.send(packet);
+            }
+        });
+    }
+
+    private static ClientboundPlayerInfoUpdatePacket buildListedPacket(List<ServerPlayer> players, boolean listed) {
+        ClientboundPlayerInfoUpdatePacket packet = new ClientboundPlayerInfoUpdatePacket(
+                EnumSet.of(ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LISTED), players);
+        if (listed) {
+            return packet; // default from constructor is listed=true
+        }
+        // For listed=false: use reflection to replace entries, since the only
+        // available constructors always read listed=true from ServerPlayer.
+        try {
+            List<ClientboundPlayerInfoUpdatePacket.Entry> entries = players.stream()
+                    .map(p -> new ClientboundPlayerInfoUpdatePacket.Entry(
+                            p.getUUID(), null, false, 0, GameType.SURVIVAL, null, null))
+                    .collect(java.util.stream.Collectors.toList());
+            java.lang.reflect.Field f = ClientboundPlayerInfoUpdatePacket.class.getDeclaredField("entries");
+            f.setAccessible(true);
+            f.set(packet, entries);
+        } catch (ReflectiveOperationException e) {
+            LOGGER.warn("Could not apply listed=false for tab packet via reflection", e);
+        }
+        return packet;
     }
 
     private void refreshPlayer(ServerPlayer player) {

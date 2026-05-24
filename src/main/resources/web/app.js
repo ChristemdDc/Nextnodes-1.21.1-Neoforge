@@ -34,7 +34,8 @@
         users: { 'abc-123': { uuid:'abc-123', name:'Steve', online:true, ranks:['admin'], primaryRank:'admin', permissions:[], meta:{} }, 'def-456': { uuid:'def-456', name:'Alex', online:false, ranks:['default'], primaryRank:'default', permissions:[], meta:{} }, 'ghi-789': { uuid:'ghi-789', name:'Notch', online:true, ranks:['vip','admin'], primaryRank:'admin', permissions:[{node:'command.tp',value:true,mode:'literal',contexts:{}}], meta:{} } },
         ranks: { admin: { name:'admin', displayName:'Admin', prefix:'&c[Admin] ', weight:100, parents:[], permissions:[{node:'command.gamemode',value:true,mode:'literal',contexts:{}},{node:'command.tp',value:true,mode:'literal',contexts:{}}], meta:{gradientStart:'#ff3d8b',gradientMiddle:'#7c4dff',gradientEnd:'#00e5ff'} }, vip: { name:'vip', displayName:'VIP', prefix:'&a[VIP] ', weight:50, parents:['default'], permissions:[{node:'command.fly',value:true,mode:'literal',contexts:{}}], meta:{gradientStart:'#00e676',gradientMiddle:'#00e5ff',gradientEnd:'#7c4dff'} }, default: { name:'default', displayName:'Jugador', prefix:'&7[Jugador] ', weight:0, parents:[], permissions:[], meta:{} } },
         commands: [ {name:'gamemode',permissionNode:'command.gamemode',source:'Minecraft Vanilla',paths:['gamemode survival','gamemode creative']}, {name:'tp',permissionNode:'command.tp',source:'Minecraft Vanilla',paths:['tp','teleport']}, {name:'fly',permissionNode:'command.fly',source:'Essentials',paths:['fly']}, {name:'heal',permissionNode:'command.heal',source:'Essentials',paths:['heal']}, {name:'give',permissionNode:'command.give',source:'Minecraft Vanilla',paths:['give']}, {name:'kick',permissionNode:'command.kick',source:'Minecraft Vanilla',paths:['kick']}, {name:'ban',permissionNode:'command.ban',source:'Minecraft Vanilla',paths:['ban']}, {name:'home',permissionNode:'command.home',source:'Essentials',paths:['home','sethome']} ],
-        defaultRank: 'default'
+        defaultRank: 'default',
+        tabSettings: { showPing: true, showHead: true }
       };
       render(); setStatus('Demo (sin servidor)');
     }
@@ -108,7 +109,21 @@
             <div class="listItem"><span class="navIcon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></span><div><b>Diseñar un rango</b><div class="muted">Peso, herencia, prefijo con gradiente y permisos.</div></div><button onclick="newRank()">Crear rango</button></div>
             <div class="listItem"><span class="navIcon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span><div><b>Revisar comandos</b><div class="muted">Los comandos bloqueados también se ocultan del autocompletado.</div></div><button onclick="showTab('commands')">Abrir</button></div>
           </div>
+        </div>
+        <div class="panel"><div class="panelHead"><h2>Lista TAB del juego</h2><span class="muted">Opciones de visualización en el TAB de Minecraft</span></div>
+          <div class="list">
+            <div class="listItem"><span class="navIcon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 6s4-4 11-4 11 4 11 4-4 4-11 4-11-4-11-4z"/><circle cx="12" cy="6" r="2"/></svg></span><div><b>Mostrar ping en el TAB</b><div class="muted">Muestra el ping del jugador como texto de color junto a su nombre (ej: §a34ms)</div></div><label class="miniCheck" style="margin:0"><input type="checkbox" id="tabShowPing" ${(state.tabSettings||{}).showPing !== false ? 'checked' : ''} onchange="saveTabSettings()"><span style="font-size:13px">Activo</span></label></div>
+            <div class="listItem"><span class="navIcon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></span><div><b>Mostrar jugadores en lista TAB</b><div class="muted">Si se desactiva, los jugadores no aparecen en la lista TAB (útil con TAB personalizado por cliente)</div></div><label class="miniCheck" style="margin:0"><input type="checkbox" id="tabShowHead" ${(state.tabSettings||{}).showHead !== false ? 'checked' : ''} onchange="saveTabSettings()"><span style="font-size:13px">Activo</span></label></div>
+          </div>
         </div>`;
+    }
+    async function saveTabSettings() {
+      const showPing = document.getElementById('tabShowPing')?.checked ?? true;
+      const showHead = document.getElementById('tabShowHead')?.checked ?? true;
+      try {
+        await api('/api/settings/tab', { method: 'PUT', body: { showPing, showHead } });
+        toast('Configuración del TAB guardada');
+      } catch(e) { toast('Error: ' + e.message); }
     }
     function renderUsers(users) {
       const filter=(document.getElementById('userFilter')?.value || '').toLowerCase();

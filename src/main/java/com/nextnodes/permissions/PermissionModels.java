@@ -14,6 +14,7 @@ public final class PermissionModels {
         public String defaultRank = "default";
         public Map<String, Rank> ranks = new LinkedHashMap<>();
         public Map<String, UserEntry> users = new LinkedHashMap<>();
+        public TabSettings tabSettings = new TabSettings();
 
         public void ensureDefaults() {
             if (this.ranks == null) {
@@ -24,6 +25,9 @@ public final class PermissionModels {
             }
             if (this.defaultRank == null || this.defaultRank.isBlank()) {
                 this.defaultRank = "default";
+            }
+            if (this.tabSettings == null) {
+                this.tabSettings = new TabSettings();
             }
             this.defaultRank = normalizeName(this.defaultRank);
             this.ranks.computeIfAbsent(this.defaultRank, key -> {
@@ -36,6 +40,11 @@ public final class PermissionModels {
             this.ranks.values().forEach(Rank::sanitize);
             this.users.values().forEach(UserEntry::sanitize);
         }
+    }
+
+    public static final class TabSettings {
+        public boolean showPing = true;
+        public boolean showHead = true;
     }
 
     public static final class Rank {
