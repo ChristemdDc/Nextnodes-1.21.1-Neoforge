@@ -251,6 +251,7 @@ public final class PermissionStore {
         UserEntry user;
         this.lock.writeLock().lock();
         try {
+            if (this.database == null) return; // store already closed
             user = this.data.users.computeIfAbsent(uuid.toString(), key -> {
                 UserEntry created = new UserEntry();
                 created.uuid = key;
@@ -284,6 +285,7 @@ public final class PermissionStore {
     public void setOnline(UUID uuid, boolean online) throws IOException {
         this.lock.writeLock().lock();
         try {
+            if (this.database == null) return; // store already closed (e.g. server stopping)
             UserEntry user = this.data.users.get(uuid.toString());
             if (user == null) return;
             user.online   = online;
