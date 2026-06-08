@@ -2,10 +2,13 @@ package com.nextnodes.permissions;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.mongodb.CursorType;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
+import com.mongodb.client.MongoCursor;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.CreateCollectionOptions;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.ReplaceOptions;
 import com.nextnodes.permissions.PermissionModels.PermissionData;
@@ -31,6 +34,7 @@ public final class PermissionStore {
     private static final String COL_RANKS    = "ranks";
     private static final String COL_USERS    = "users";
     private static final String COL_SETTINGS = "settings";
+    private static final String COL_SYNC = "sync_events";
 
     private static final String KEY_DEFAULT_RANK   = "defaultRank";
     private static final String KEY_SCHEMA_VERSION = "schemaVersion";
@@ -53,6 +57,10 @@ public final class PermissionStore {
 
     private PermissionData          data           = new PermissionData();
     private volatile PermissionData cachedSnapshot;
+    private final String serverId = UUID.randomUUID().toString();
+    private volatile boolean syncClosed = false;
+    private volatile long lastEventTs = 0L;
+    private Thread syncThread;
 
     public PermissionStore(String connectionUri, String databaseName) {
         this.connectionUri = connectionUri;
@@ -72,15 +80,22 @@ public final class PermissionStore {
             this.data        = readAll();
             this.data.ensureDefaults();
             writeDefaultsIfMissing();
+            ensureSyncCollection();
             this.cachedSnapshot = null;
         } catch (Exception ex) {
             throw new IOException("Unable to load MongoDB permission store at " + this.connectionUri, ex);
         } finally {
             this.lock.writeLock().unlock();
         }
+        startSyncListener();
     }
 
     public void close() {
+        this.syncClosed = true;
+        if (this.syncThread != null) {
+            this.syncThread.interrupt();
+            this.syncThread = null;
+        }
         this.lock.writeLock().lock();
         try {
             closeClient();
@@ -148,6 +163,7 @@ public final class PermissionStore {
             this.lock.writeLock().unlock();
         }
         fireChanged();
+        publishEvent("rank", rank.name);
     }
 
     public void deleteRank(String name) throws IOException {
@@ -199,6 +215,7 @@ public final class PermissionStore {
             this.lock.writeLock().unlock();
         }
         fireChanged();
+        publishEvent("rank", normalized);
     }
 
     // -------------------------------------------------------------------------
@@ -229,6 +246,7 @@ public final class PermissionStore {
         }
         fireChanged();
         fireUserSaved(user);
+        publishEvent("user", user.uuid);
     }
 
     public void deleteUser(String uuid) throws IOException {
@@ -245,6 +263,7 @@ public final class PermissionStore {
             this.lock.writeLock().unlock();
         }
         fireChanged();
+        publishEvent("user", uuid);
     }
 
     public void touchPlayer(UUID uuid, String name, boolean online) throws IOException {
@@ -387,6 +406,7 @@ public final class PermissionStore {
             this.lock.writeLock().unlock();
         }
         fireChanged();
+        publishEvent("import", "");
     }
 
     // -------------------------------------------------------------------------
@@ -426,6 +446,100 @@ public final class PermissionStore {
     // -------------------------------------------------------------------------
     // Internal: MongoDB I/O
     // -------------------------------------------------------------------------
+
+    private void ensureSyncCollection() {
+        try {
+            boolean exists = false;
+            for (String name : this.database.listCollectionNames()) {
+                if (name.equals(COL_SYNC)) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                this.database.createCollection(COL_SYNC,
+                        new CreateCollectionOptions().capped(true).sizeInBytes(1_048_576L).maxDocuments(10_000L));
+            }
+            // Seed one document so the tailable cursor always has a valid anchor point.
+            col(COL_SYNC).insertOne(new Document("origin", this.serverId)
+                    .append("seed", true)
+                    .append("ts", System.currentTimeMillis()));
+        } catch (Exception ignored) {
+            // Another server may have created it concurrently, or it already exists; safe to ignore.
+        }
+    }
+
+    private void publishEvent(String type, String key) {
+        try {
+            if (this.database == null) {
+                return;
+            }
+            col(COL_SYNC).insertOne(new Document("origin", this.serverId)
+                    .append("type", type)
+                    .append("key", key)
+                    .append("ts", System.currentTimeMillis()));
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void startSyncListener() {
+        if (this.syncThread != null) {
+            return;
+        }
+        this.lastEventTs = System.currentTimeMillis();
+        this.syncThread = new Thread(this::runSyncListener, "nextnodes-sync");
+        this.syncThread.setDaemon(true);
+        this.syncThread.start();
+    }
+
+    private void runSyncListener() {
+        while (!this.syncClosed) {
+            try (MongoCursor<Document> cursor = col(COL_SYNC)
+                    .find(Filters.gt("ts", this.lastEventTs))
+                    .cursorType(CursorType.TailableAwait)
+                    .noCursorTimeout(true)
+                    .iterator()) {
+                while (!this.syncClosed && cursor.hasNext()) {
+                    Document event = cursor.next();
+                    this.lastEventTs = Math.max(this.lastEventTs, longFrom(event.get("ts"), this.lastEventTs));
+                    if (this.serverId.equals(event.getString("origin"))) {
+                        continue; // ignore our own writes
+                    }
+                    if (Boolean.TRUE.equals(event.getBoolean("seed"))) {
+                        continue;
+                    }
+                    reloadFromExternalChange();
+                }
+            } catch (Exception ex) {
+                if (this.syncClosed) {
+                    return;
+                }
+                try {
+                    Thread.sleep(1000L);
+                } catch (InterruptedException ignored) {
+                    return;
+                }
+            }
+        }
+    }
+
+    private void reloadFromExternalChange() {
+        this.lock.writeLock().lock();
+        try {
+            if (this.database == null) {
+                return;
+            }
+            PermissionData fresh = readAll();
+            fresh.ensureDefaults();
+            this.data = fresh;
+            this.cachedSnapshot = null;
+        } catch (Exception ignored) {
+            return;
+        } finally {
+            this.lock.writeLock().unlock();
+        }
+        fireChanged();
+    }
 
     private MongoCollection<Document> col(String name) {
         return this.database.getCollection(name);
@@ -503,6 +617,7 @@ public final class PermissionStore {
         }
         fireChanged();
         fireTabSettingsChanged();
+        publishEvent("settings", "tab");
     }
 
     private void writeDefaultsIfMissing() {
