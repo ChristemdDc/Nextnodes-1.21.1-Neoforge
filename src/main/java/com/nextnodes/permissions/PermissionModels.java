@@ -50,6 +50,7 @@ public final class PermissionModels {
         public String name = "";
         public String displayName = "";
         public String prefix = "";
+        public String suffix = "";
         public int weight = 0;
         public List<String> parents = new ArrayList<>();
         public List<PermissionRule> permissions = new ArrayList<>();
@@ -62,6 +63,9 @@ public final class PermissionModels {
             }
             if (this.prefix == null) {
                 this.prefix = "";
+            }
+            if (this.suffix == null) {
+                this.suffix = "";
             }
             if (this.parents == null) {
                 this.parents = new ArrayList<>();
@@ -80,6 +84,7 @@ public final class PermissionModels {
     public static final class UserEntry {
         public String uuid = "";
         public String name = "";
+        public String tag = "";
         public String primaryRank = "";
         public List<String> ranks = new ArrayList<>();
         public List<PermissionRule> permissions = new ArrayList<>();
@@ -93,6 +98,9 @@ public final class PermissionModels {
             }
             if (this.name == null) {
                 this.name = "";
+            }
+            if (this.tag == null) {
+                this.tag = "";
             }
             this.primaryRank = normalizeName(this.primaryRank);
             if (this.ranks == null) {
