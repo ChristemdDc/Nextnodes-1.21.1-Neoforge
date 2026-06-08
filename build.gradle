@@ -136,6 +136,10 @@ dependencies {
     // For more info:
     // http://www.gradle.org/docs/current/userguide/artifact_dependencies_tutorial.html
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
+
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 tasks.register('copyToServerMods', Copy) {
@@ -190,4 +194,8 @@ idea {
         downloadSources = true
         downloadJavadoc = true
     }
+}
+
+test {
+    useJUnitPlatform()
 }
