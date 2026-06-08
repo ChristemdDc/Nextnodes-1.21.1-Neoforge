@@ -330,7 +330,18 @@ public final class NextNodesPermissions {
 
     @net.neoforged.bus.api.SubscribeEvent
     public void onServerChat(ServerChatEvent event) {
-        event.getPlayer().refreshDisplayName();
+        ServerPlayer player = event.getPlayer();
+        MinecraftServer currentServer = player.getServer();
+        if (currentServer == null) {
+            return;
+        }
+        Component line = Component.empty()
+                .append(composeFullName(player.getUUID(), player.getGameProfile().getName()))
+                .append(Component.literal(": ").withStyle(ChatFormatting.WHITE))
+                .append(event.getMessage());
+        event.setCanceled(true);
+        currentServer.getPlayerList().broadcastSystemMessage(line, false);
+        LOGGER.info("[CHAT] {}: {}", player.getGameProfile().getName(), event.getMessage().getString());
     }
 
     @net.neoforged.bus.api.SubscribeEvent
