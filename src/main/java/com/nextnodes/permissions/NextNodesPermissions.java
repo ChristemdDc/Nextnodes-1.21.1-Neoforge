@@ -181,7 +181,11 @@ public final class NextNodesPermissions {
         this.server = event.getServer();
         int port = Integer.getInteger("nextnodes.web.port", 25900);
         this.webPanel = new WebPanelServer(this.store, port, this.commandCatalog::snapshot);
-        this.webPanel.setServerIp(event.getServer().getLocalIp());
+        // Display host for the panel URL. On a VPS the auto-detected IP is the server's
+        // private address (unreachable from outside), so let the admin override it with
+        // -Dnextnodes.web.host=<public-ip-or-domain>. Falls back to auto-detection.
+        String webHost = System.getProperty("nextnodes.web.host", "").trim();
+        this.webPanel.setServerIp(webHost.isEmpty() ? event.getServer().getLocalIp() : webHost);
         this.webPanel.setAuditLog(this.auditLog);
         this.webPanel.setRankHistoryLog(this.rankHistoryLog);
         this.webPanel.setOnSessionExpired(() -> {
