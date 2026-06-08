@@ -72,6 +72,7 @@ public final class PermissionStore {
     // -------------------------------------------------------------------------
 
     public void load() throws IOException {
+        this.syncClosed = false;
         this.lock.writeLock().lock();
         try {
             closeClient();

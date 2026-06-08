@@ -17,7 +17,6 @@ import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.synchronization.SuggestionProviders;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.numbers.FixedFormat;
 import net.minecraft.network.protocol.game.ClientboundCommandsPacket;
 import net.minecraft.server.MinecraftServer;
