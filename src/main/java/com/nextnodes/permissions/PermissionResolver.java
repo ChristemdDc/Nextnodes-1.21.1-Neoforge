@@ -76,6 +76,38 @@ public final class PermissionResolver {
         return "";
     }
 
+    public String resolveSuffix(UUID uuid) {
+        PermissionData data = this.store.snapshot();
+        UserEntry user = data.users.get(uuid.toString());
+        if (user == null) {
+            Rank defaultRank = data.ranks.get(data.defaultRank);
+            return defaultRank == null ? "" : defaultRank.suffix;
+        }
+        for (Rank rank : rankOrder(data, user)) {
+            if (rank.suffix != null && !rank.suffix.isBlank()) {
+                return rank.suffix;
+            }
+        }
+        return "";
+    }
+
+    public String resolveTag(UUID uuid) {
+        PermissionData data = this.store.snapshot();
+        UserEntry user = data.users.get(uuid.toString());
+        return user == null || user.tag == null ? "" : user.tag;
+    }
+
+    public int resolveWeight(UUID uuid) {
+        PermissionData data = this.store.snapshot();
+        UserEntry user = data.users.get(uuid.toString());
+        if (user == null) {
+            Rank defaultRank = data.ranks.get(data.defaultRank);
+            return defaultRank == null ? 0 : defaultRank.weight;
+        }
+        List<Rank> order = rankOrder(data, user);
+        return order.isEmpty() ? 0 : order.get(0).weight;
+    }
+
     private Boolean resolveBooleanUncached(UUID uuid, String node, Map<String, String> contexts) {
         PermissionData data = this.store.snapshot();
         UserEntry user = data.users.get(uuid.toString());
