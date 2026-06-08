@@ -15,6 +15,7 @@ import com.nextnodes.permissions.RankHistoryLog;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
@@ -36,6 +37,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.UUID;
 
@@ -192,7 +194,7 @@ public final class NextNodesCommands {
                                 .then(Commands.argument("jugador", StringArgumentType.word())
                                         .suggests(playerSuggestions())
                                         .then(Commands.argument("rango", StringArgumentType.word())
-                                                .suggests(rankSuggestions())
+                                                .suggests(userRankSuggestions())
                                                 .executes(context -> {
                                                     String input = StringArgumentType.getString(context, "jugador");
                                                     String rankName = StringArgumentType.getString(context, "rango");
@@ -602,23 +604,45 @@ public final class NextNodesCommands {
     }
 
     private SuggestionProvider<CommandSourceStack> rankSuggestions() {
-        return (context, builder) -> {
-            this.mod.store().snapshot().ranks.keySet().forEach(builder::suggest);
-            return builder.buildFuture();
-        };
+        return (context, builder) ->
+                SharedSuggestionProvider.suggest(this.mod.store().snapshot().ranks.keySet(), builder);
     }
 
     private SuggestionProvider<CommandSourceStack> playerSuggestions() {
         return (context, builder) -> {
+            LinkedHashSet<String> names = new LinkedHashSet<>();
             MinecraftServer server = context.getSource().getServer();
             if (server != null) {
-                server.getPlayerList().getPlayers().forEach(p -> builder.suggest(p.getGameProfile().getName()));
+                server.getPlayerList().getPlayers().forEach(p -> names.add(p.getGameProfile().getName()));
             }
             this.mod.store().snapshot().users.values().forEach(u -> {
-                if (!u.name.isBlank()) builder.suggest(u.name);
-                else if (!u.uuid.isBlank()) builder.suggest(u.uuid);
+                if (!u.name.isBlank()) {
+                    names.add(u.name);
+                } else if (!u.uuid.isBlank()) {
+                    names.add(u.uuid);
+                }
             });
-            return builder.buildFuture();
+            return SharedSuggestionProvider.suggest(names, builder);
+        };
+    }
+
+    /**
+     * Suggests only the ranks the targeted player currently has (read from the already-typed
+     * "jugador" argument), so removing a rank is just a tab-complete. Falls back to all ranks
+     * when the player can't be resolved yet.
+     */
+    private SuggestionProvider<CommandSourceStack> userRankSuggestions() {
+        return (context, builder) -> {
+            try {
+                String input = StringArgumentType.getString(context, "jugador");
+                UserEntry user = findUser(input, context.getSource().getServer());
+                if (user != null && !user.ranks.isEmpty()) {
+                    return SharedSuggestionProvider.suggest(user.ranks, builder);
+                }
+            } catch (IllegalArgumentException ignored) {
+                // "jugador" not parsed yet; fall through to all ranks.
+            }
+            return SharedSuggestionProvider.suggest(this.mod.store().snapshot().ranks.keySet(), builder);
         };
     }
 
