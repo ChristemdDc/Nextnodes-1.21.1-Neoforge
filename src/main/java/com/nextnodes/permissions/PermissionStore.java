@@ -533,6 +533,7 @@ public final class PermissionStore {
         return new Document("_id", rank.name)
                 .append("displayName", rank.displayName)
                 .append("prefix",      rank.prefix)
+                .append("suffix",      rank.suffix)
                 .append("weight",      rank.weight)
                 .append("parents",     rank.parents)
                 .append("permissions", perms)
@@ -544,6 +545,7 @@ public final class PermissionStore {
         rank.name        = doc.getString("_id");
         rank.displayName = doc.getString("displayName");
         rank.prefix      = doc.getString("prefix");
+        rank.suffix      = doc.getString("suffix");
         rank.weight      = intFrom(doc.get("weight"), 0);
         rank.parents     = doc.getList("parents", String.class, new ArrayList<>());
 
@@ -564,6 +566,7 @@ public final class PermissionStore {
         for (PermissionRule rule : user.permissions) perms.add(ruleToDoc(rule));
         return new Document("_id", user.uuid)
                 .append("name",        user.name)
+                .append("tag",         user.tag)
                 .append("primaryRank", user.primaryRank)
                 .append("ranks",       user.ranks)
                 .append("permissions", perms)
@@ -576,6 +579,7 @@ public final class PermissionStore {
         UserEntry user = new UserEntry();
         user.uuid        = doc.getString("_id");
         user.name        = doc.getString("name");
+        user.tag         = doc.getString("tag");
         user.primaryRank = doc.getString("primaryRank");
         user.ranks       = doc.getList("ranks", String.class, new ArrayList<>());
         user.lastSeen    = longFrom(doc.get("lastSeen"), 0L);
