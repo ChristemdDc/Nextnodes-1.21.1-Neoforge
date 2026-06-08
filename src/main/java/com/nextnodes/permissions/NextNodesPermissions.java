@@ -248,27 +248,25 @@ public final class NextNodesPermissions {
         this.commandCatalog.refresh(event.getDispatcher());
     }
 
+    private Component composeFullName(UUID uuid, String baseName) {
+        return PrefixFormatter.composeName(
+                this.resolver.resolvePrefix(uuid),
+                baseName,
+                this.resolver.resolveSuffix(uuid),
+                this.resolver.resolveTag(uuid));
+    }
+
     @net.neoforged.bus.api.SubscribeEvent
     public void onNameFormat(PlayerEvent.NameFormat event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            event.setDisplayname(PrefixFormatter.prefixedName(this.resolver.resolvePrefix(player.getUUID()), event.getUsername()));
+            event.setDisplayname(composeFullName(player.getUUID(), player.getGameProfile().getName()));
         }
     }
 
     @net.neoforged.bus.api.SubscribeEvent
     public void onTabListName(PlayerEvent.TabListNameFormat event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            UUID uuid = player.getUUID();
-            Component prefixComp = PrefixFormatter.format(this.resolver.resolvePrefix(uuid));
-            Component nameComp = Component.literal(player.getGameProfile().getName())
-                    .withStyle(ChatFormatting.RESET);
-
-            MutableComponent result = Component.empty();
-            if (!prefixComp.getString().isBlank()) {
-                result.append(prefixComp);
-            }
-            result.append(nameComp);
-            event.setDisplayName(result);
+            event.setDisplayName(composeFullName(player.getUUID(), player.getGameProfile().getName()));
         }
     }
 

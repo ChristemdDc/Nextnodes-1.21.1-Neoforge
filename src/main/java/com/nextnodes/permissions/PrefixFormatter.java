@@ -20,6 +20,26 @@ public final class PrefixFormatter {
         return result;
     }
 
+    public static Component composeName(String prefix, String name, String suffix, String tag) {
+        MutableComponent result = Component.empty();
+        Component prefixComponent = format(prefix);
+        if (!prefixComponent.getString().isBlank()) {
+            result.append(prefixComponent);
+        }
+        result.append(Component.literal(name).withStyle(ChatFormatting.RESET));
+        Component suffixComponent = format(suffix);
+        if (!suffixComponent.getString().isBlank()) {
+            result.append(Component.literal(" "));
+            result.append(suffixComponent);
+        }
+        Component tagComponent = format(tag);
+        if (!tagComponent.getString().isBlank()) {
+            result.append(Component.literal(" "));
+            result.append(tagComponent);
+        }
+        return result;
+    }
+
     public static Component format(String text) {
         if (text == null || text.isBlank()) {
             return Component.empty();
