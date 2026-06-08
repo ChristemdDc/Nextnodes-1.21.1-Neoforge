@@ -2,6 +2,7 @@ package com.nextnodes.permissions;
 
 import com.nextnodes.permissions.commands.NextNodesCommands;
 import com.nextnodes.permissions.integration.PermissionHandlerEvents;
+import com.nextnodes.permissions.integration.TabListManager;
 import com.nextnodes.permissions.web.WebPanelServer;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.ParseResults;
@@ -73,6 +74,7 @@ public final class NextNodesPermissions {
     private final CommandCatalog commandCatalog;
     private final AuditLog auditLog;
     private final RankHistoryLog rankHistoryLog;
+    private final TabListManager tabListManager;
     /** Tracks each online player's primaryRank to detect changes and notify them. */
     private final Map<UUID, String> prevPrimaryRanks = new ConcurrentHashMap<>();
     private MinecraftServer server;
@@ -86,6 +88,7 @@ public final class NextNodesPermissions {
             this.commandCatalog = null;
             this.auditLog = null;
             this.rankHistoryLog = null;
+            this.tabListManager = null;
             LOGGER.info("NextNodes Permissions is installed on the client; server-only services are disabled.");
             return;
         }
@@ -94,6 +97,7 @@ public final class NextNodesPermissions {
         String mongoDb  = System.getProperty("nextnodes.mongodb.database", "nextnodes_permissions");
         this.store = new PermissionStore(mongoUri, mongoDb);
         this.resolver = new PermissionResolver(this.store);
+        this.tabListManager = new TabListManager(this.resolver);
         this.commandCatalog = new CommandCatalog();
         this.auditLog = new AuditLog(this.store);
         this.rankHistoryLog = new RankHistoryLog(this.store);
@@ -201,6 +205,9 @@ public final class NextNodesPermissions {
                 sb.setDisplayObjective(DisplaySlot.LIST, null);
                 sb.removeObjective(obj);
             }
+            if (this.tabListManager != null) {
+                this.tabListManager.cleanupAll(this.server);
+            }
         }
         if (this.webPanel != null) {
             this.webPanel.close();
@@ -232,6 +239,9 @@ public final class NextNodesPermissions {
 
     @net.neoforged.bus.api.SubscribeEvent
     public void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player && this.tabListManager != null) {
+            this.tabListManager.remove(player);
+        }
         UUID uuid = event.getEntity().getUUID();
         this.prevPrimaryRanks.remove(uuid);
         DB_EXECUTOR.execute(() -> {
@@ -436,6 +446,9 @@ public final class NextNodesPermissions {
     private void refreshPlayerName(ServerPlayer player) {
         player.refreshDisplayName();
         player.refreshTabListName();
+        if (this.tabListManager != null) {
+            this.tabListManager.apply(player);
+        }
     }
 
     private void sendFilteredCommands(ServerPlayer player) {
