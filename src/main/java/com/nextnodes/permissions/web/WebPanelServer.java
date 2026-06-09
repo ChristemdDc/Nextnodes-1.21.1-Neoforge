@@ -35,7 +35,7 @@ import java.util.function.Supplier;
 
 public final class WebPanelServer implements AutoCloseable {
     private static final Gson GSON = new Gson();
-    private static final long SESSION_DURATION_MS = 15L * 60L * 1000L;
+    private volatile long sessionDurationMs = 15L * 60L * 1000L;
     private static final int MAX_LOGIN_ATTEMPTS = 5;
     private static final long LOGIN_COOLDOWN_MS = 60_000L;
 
@@ -123,6 +123,12 @@ public final class WebPanelServer implements AutoCloseable {
         this.onSessionExpired = callback;
     }
 
+    public void setSessionDurationMinutes(int minutes) {
+        if (minutes > 0) {
+            this.sessionDurationMs = minutes * 60_000L;
+        }
+    }
+
     public void setAuditLog(AuditLog auditLog) {
         this.auditLog = auditLog;
     }
@@ -167,14 +173,14 @@ public final class WebPanelServer implements AutoCloseable {
 
     private void scheduleShutdown() {
         cancelShutdownTask();
-        this.sessionExpiresAt = System.currentTimeMillis() + SESSION_DURATION_MS;
+        this.sessionExpiresAt = System.currentTimeMillis() + this.sessionDurationMs;
         this.shutdownTask = this.scheduler.schedule(() -> {
             broadcastSessionExpired();
             try { Thread.sleep(5000); } catch (InterruptedException ignored) { return; }
             stop();
             Runnable callback = this.onSessionExpired;
             if (callback != null) callback.run();
-        }, SESSION_DURATION_MS, TimeUnit.MILLISECONDS);
+        }, this.sessionDurationMs, TimeUnit.MILLISECONDS);
     }
 
     private void cancelShutdownTask() {
@@ -233,7 +239,7 @@ public final class WebPanelServer implements AutoCloseable {
             if (path.equals("/api/session") && method.equals("GET")) {
                 JsonObject response = new JsonObject();
                 response.addProperty("remainingMs", remainingMs());
-                response.addProperty("totalMs", SESSION_DURATION_MS);
+                response.addProperty("totalMs", this.sessionDurationMs);
                 sendJson(exchange, 200, response);
                 return;
             }

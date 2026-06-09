@@ -74,6 +74,7 @@ public final class NextNodesPermissions {
     private final AuditLog auditLog;
     private final RankHistoryLog rankHistoryLog;
     private final TabListManager tabListManager;
+    private final NextNodesConfig config;
     /** Tracks each online player's primaryRank to detect changes and notify them. */
     private final Map<UUID, String> prevPrimaryRanks = new ConcurrentHashMap<>();
     private MinecraftServer server;
@@ -88,13 +89,13 @@ public final class NextNodesPermissions {
             this.auditLog = null;
             this.rankHistoryLog = null;
             this.tabListManager = null;
+            this.config = null;
             LOGGER.info("NextNodes Permissions is installed on the client; server-only services are disabled.");
             return;
         }
 
-        String mongoUri = System.getProperty("nextnodes.mongodb.uri", "mongodb://localhost:27017");
-        String mongoDb  = System.getProperty("nextnodes.mongodb.database", "nextnodes_permissions");
-        this.store = new PermissionStore(mongoUri, mongoDb);
+        this.config = NextNodesConfig.load();
+        this.store = new PermissionStore(this.config.mongoUri, this.config.mongoDatabase);
         this.resolver = new PermissionResolver(this.store);
         this.tabListManager = new TabListManager(this.resolver);
         this.commandCatalog = new CommandCatalog();
@@ -179,13 +180,11 @@ public final class NextNodesPermissions {
     @net.neoforged.bus.api.SubscribeEvent
     public void onServerStarting(ServerStartingEvent event) {
         this.server = event.getServer();
-        int port = Integer.getInteger("nextnodes.web.port", 25900);
-        this.webPanel = new WebPanelServer(this.store, port, this.commandCatalog::snapshot);
-        // Display host for the panel URL. On a VPS the auto-detected IP is the server's
-        // private address (unreachable from outside), so let the admin override it with
-        // -Dnextnodes.web.host=<public-ip-or-domain>. Falls back to auto-detection.
-        String webHost = System.getProperty("nextnodes.web.host", "").trim();
-        this.webPanel.setServerIp(webHost.isEmpty() ? event.getServer().getLocalIp() : webHost);
+        this.webPanel = new WebPanelServer(this.store, this.config.webPort, this.commandCatalog::snapshot);
+        this.webPanel.setSessionDurationMinutes(this.config.sessionMinutes);
+        // Display host for the panel URL. On a VPS the auto-detected IP is the server's private
+        // address (unreachable from outside); set "webHost" in config/nextnodes.json. Falls back to auto-detect.
+        this.webPanel.setServerIp(this.config.webHost.isBlank() ? event.getServer().getLocalIp() : this.config.webHost);
         this.webPanel.setAuditLog(this.auditLog);
         this.webPanel.setRankHistoryLog(this.rankHistoryLog);
         this.webPanel.setOnSessionExpired(() -> {
