@@ -22,6 +22,10 @@
     const I_moon='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
     function applyTheme(t){ document.documentElement.setAttribute('data-theme', t); try{ localStorage.setItem('nn_theme', t); }catch(e){} const b=document.getElementById('themeBtn'); if(b) b.innerHTML = (t==='dark'? I_sun : I_moon); }
     function toggleTheme(){ applyTheme(document.documentElement.getAttribute('data-theme')==='dark' ? 'light' : 'dark'); }
+    function liveFilter(id, fn){ const before=document.getElementById(id); const pos=before?before.selectionStart:null; fn(); const after=document.getElementById(id); if(after){ after.focus(); if(pos!=null){ try{ after.setSelectionRange(pos,pos); }catch(e){} } } }
+    function filterUsers(){ liveFilter('userFilter', ()=>renderUsers(Object.values(state.users||{}))); }
+    function filterRanks(){ liveFilter('rankSearch', ()=>renderRanks(Object.values(state.ranks||{}))); }
+    function filterCommands(){ liveFilter('commandSearch', ()=>renderCommands(state.commands||[])); }
     applyTheme((function(){ try{ return localStorage.getItem('nn_theme'); }catch(e){ return null; } })() || 'light');
     function statCard(label, num, sub, color, icon){
       return `<div class="statCard"><div class="statTop"><span class="label">${label}</span><span class="statIcon" style="background:${color}1f;color:${color}">${icon}</span></div><div class="statNum">${num}</div><div class="statSub">${escapeHtml(String(sub))}</div></div>`;
@@ -151,7 +155,7 @@
       const filter=(document.getElementById('userFilter')?.value || '').toLowerCase();
       const filtered=users.filter(u=>(u.name+u.uuid+(u.ranks||[]).join(' ')).toLowerCase().includes(filter));
       document.getElementById('usersView').innerHTML = `
-        <div class="toolbar"><input id="userFilter" placeholder="Buscar jugador, UUID o rango" value="${escapeAttr(filter)}" oninput="render()"><button class="primary" onclick="newUser()">+ Jugador offline</button><button class="ghost" onclick="load()">Actualizar</button></div>
+        <div class="toolbar"><input id="userFilter" placeholder="Buscar jugador, UUID o rango" value="${escapeAttr(filter)}" oninput="filterUsers()"><button class="primary" onclick="newUser()">+ Jugador offline</button><button class="ghost" onclick="load()">Actualizar</button></div>
         <div class="tableCard"><div class="cardHead"><h2>Jugadores</h2><span class="muted">${filtered.length} visibles</span></div>
           <table class="dataTable"><thead><tr><th>Jugador</th><th>Rango principal</th><th>Rangos</th><th>Estado</th><th></th></tr></thead><tbody>${filtered.map(userRow).join('') || '<tr><td colspan="5"><div class="empty">Todavía no hay jugadores registrados.</div></td></tr>'}</tbody></table></div>`;
     }
@@ -166,7 +170,7 @@
       const q=(document.getElementById('rankSearch')?.value || rankFilter).toLowerCase(); rankFilter=q;
       const filtered=ranks.sort((a,b)=>(b.weight||0)-(a.weight||0)).filter(r=>(r.name+r.displayName+(r.parents||[]).join(' ')).toLowerCase().includes(q));
       document.getElementById('ranksView').innerHTML = `
-        <div class="toolbar"><input id="rankSearch" placeholder="Buscar rango" value="${escapeAttr(q)}" oninput="rankFilter=this.value; renderRanks(Object.values(state.ranks || {}))"><button class="primary" onclick="newRank()">Nuevo rango</button><button onclick="load()">Actualizar</button></div>
+        <div class="toolbar"><input id="rankSearch" placeholder="Buscar rango" value="${escapeAttr(q)}" oninput="filterRanks()"><button class="primary" onclick="newRank()">Nuevo rango</button><button onclick="load()">Actualizar</button></div>
         <div class="grid">${filtered.map(rankCard).join('') || '<div class="empty">No hay rangos para mostrar.</div>'}</div>`;
     }
     function rankCard(r) {
@@ -187,7 +191,7 @@
       const visible=commands.filter(c => commandMatches(c,q) && (commandCategory==='all' || commandSource(c)===commandCategory));
       const groups=groupBy(visible, commandSource);
       document.getElementById('commandsView').innerHTML = `
-        <div class="toolbar commands"><input id="commandSearch" placeholder="Buscar comando, permiso o subcomando" value="${escapeAttr(q)}" oninput="commandFilter=this.value; renderCommands(state.commands || [])">
+        <div class="toolbar commands"><input id="commandSearch" placeholder="Buscar comando, permiso o subcomando" value="${escapeAttr(q)}" oninput="filterCommands()">
           <select id="commandCategory" onchange="commandCategory=this.value; renderCommands(state.commands || [])">${categories.map(c=>`<option value="${escapeAttr(c)}" ${c===commandCategory?'selected':''}>${c==='all'?'Todos los mods':escapeHtml(c)}</option>`).join('')}</select>
           <select id="commandRank" onchange="renderCommands(state.commands || [])">${ranks.map(r=>`<option value="${escapeAttr(r.name)}" ${rank.name===r.name?'selected':''}>${escapeHtml(r.displayName || r.name)}</option>`).join('')}</select>
           <button onclick="editRankByName(document.getElementById('commandRank').value)">Editar rango</button></div>
