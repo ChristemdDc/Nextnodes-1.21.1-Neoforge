@@ -268,12 +268,11 @@ public final class NextNodesPermissions {
                 this.resolver.resolveTag(uuid));
     }
 
-    @net.neoforged.bus.api.SubscribeEvent
-    public void onNameFormat(PlayerEvent.NameFormat event) {
-        if (event.getEntity() instanceof ServerPlayer player) {
-            event.setDisplayname(composeFullName(player.getUUID(), player.getGameProfile().getName()));
-        }
-    }
+    // Intentionally NOT overriding PlayerEvent.NameFormat: getDisplayName() already team-formats the
+    // NameFormat result (Player.getDisplayName -> formatNameForTeam(team, displayname)). Adding the
+    // prefix here too would double it (e.g. "[Rank] [Rank] Name") in join/leave/death messages.
+    // The scoreboard team (TabListManager) supplies prefix + suffix + tag for getDisplayName() and the
+    // over-head name; the TAB list and chat build their own composed name via composeFullName().
 
     @net.neoforged.bus.api.SubscribeEvent
     public void onTabListName(PlayerEvent.TabListNameFormat event) {
