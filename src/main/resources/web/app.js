@@ -11,6 +11,27 @@
       ['c','Rojo','#ff5555'], ['d','Rosa','#ff55ff'], ['e','Amarillo','#ffff55'], ['f','Blanco','#ffffff']
     ];
     const formats = [['l','B'], ['o','I'], ['n','U'], ['m','S'], ['r','Reset']];
+    const I_users='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>';
+    const I_bolt='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>';
+    const I_star='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>';
+    const I_cmd='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>';
+    const I_userPlus='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>';
+    const I_layers='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>';
+    const I_tab='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>';
+    const I_sun='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';
+    const I_moon='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+    function applyTheme(t){ document.documentElement.setAttribute('data-theme', t); try{ localStorage.setItem('nn_theme', t); }catch(e){} const b=document.getElementById('themeBtn'); if(b) b.innerHTML = (t==='dark'? I_sun : I_moon); }
+    function toggleTheme(){ applyTheme(document.documentElement.getAttribute('data-theme')==='dark' ? 'light' : 'dark'); }
+    applyTheme((function(){ try{ return localStorage.getItem('nn_theme'); }catch(e){ return null; } })() || 'light');
+    function statCard(label, num, sub, color, icon){
+      return `<div class="statCard"><div class="statTop"><span class="label">${label}</span><span class="statIcon" style="background:${color}1f;color:${color}">${icon}</span></div><div class="statNum">${num}</div><div class="statSub">${escapeHtml(String(sub))}</div></div>`;
+    }
+    function tile(name, sub, onclick, color, icon){
+      return `<button class="tile" onclick="${onclick}"><span class="tileIcon" style="background:linear-gradient(135deg,${color},${color}cc)">${icon}</span><span style="flex:1;min-width:0"><div class="t-name">${name}</div><div class="t-sub">${sub}</div></span></button>`;
+    }
+    function rankTableRow(r){
+      return `<tr><td><div class="cellUser"><div><div class="uName">${escapeHtml(r.displayName||r.name)}</div><div class="uHandle">${escapeHtml(r.name)}</div></div></div></td><td><span class="pill">peso ${r.weight||0}</span></td><td><span style="display:inline-block;background:#1e1b2e;color:#fff;padding:4px 9px;border-radius:7px;font-family:var(--mono);font-size:12px">${prefixHtml(r.prefix||'&7['+r.name+']')}</span></td><td><span class="muted">${(r.permissions||[]).length} reglas</span></td><td class="right"><div class="tableActions"><button onclick="editRankByName('${escapeAttr(r.name)}')">Editar</button><button class="danger" onclick="deleteRank('${escapeAttr(r.name)}')">Eliminar</button></div></td></tr>`;
+    }
     if (token) boot();
 
     async function login() {
@@ -93,27 +114,29 @@
     function renderOverview(users, ranks, commands) {
       const online=users.filter(u=>u.online).length;
       const rules=ranks.reduce((n,r)=>n+(r.permissions||[]).length,0)+users.reduce((n,u)=>n+(u.permissions||[]).length,0);
+      const sortedRanks=[...ranks].sort((a,b)=>(b.weight||0)-(a.weight||0));
       document.getElementById('overviewView').innerHTML = `
-        <div class="hero"><div class="heroInner">
-          <div class="heroTitle"><span class="heroBadge"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5"/></svg> Nextnodes Permissions</span><h2>Gestión del servidor en tiempo real</h2><p class="muted">Controla rangos, jugadores, comandos y permisos desde este panel. Todos los cambios se sincronizan al instante con el servidor.</p></div>
-          <div class="heroActions"><button class="primary" onclick="newRank()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Crear rango</button><button onclick="showTab('commands')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> Configurar comandos</button></div>
-        </div></div>
-        <div class="stats">
-          <div class="stat"><span class="muted">Jugadores</span><b>${users.length}</b></div>
-          <div class="stat"><span class="muted">Online</span><b>${online}</b></div>
-          <div class="stat"><span class="muted">Rangos</span><b>${ranks.length}</b></div>
-          <div class="stat"><span class="muted">Comandos</span><b>${commands.length}</b></div>
-        </div>
-        <div class="panel"><div class="panelHead"><h2>Acciones rápidas</h2><span class="muted">${rules} reglas activas</span></div>
-          <div class="list">
-            <div class="listItem"><span class="navIcon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></span><div><b>Diseñar un rango</b><div class="muted">Peso, herencia, prefijo con gradiente y permisos.</div></div><button onclick="newRank()">Crear rango</button></div>
-            <div class="listItem"><span class="navIcon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span><div><b>Revisar comandos</b><div class="muted">Los comandos bloqueados también se ocultan del autocompletado.</div></div><button onclick="showTab('commands')">Abrir</button></div>
+        <div class="bento">
+          ${statCard('Jugadores', users.length, online+' en línea ahora', '#6d5dfb', I_users)}
+          ${statCard('En línea', online, users.length+' registrados', '#18c5a0', I_bolt)}
+          ${statCard('Rangos', ranks.length, rules+' reglas activas', '#f5a623', I_star)}
+          ${statCard('Comandos', commands.length, 'detectados en el servidor', '#4d7cfe', I_cmd)}
+          <div class="actionsCard">
+            <div class="cardTitle"><h2>Acciones rápidas</h2><span class="muted">Atajos del panel</span></div>
+            <div class="tileGrid">
+              ${tile('Crear rango','Peso, prefijo y herencia',"newRank()",'#6d5dfb', I_star)}
+              ${tile('Configurar comandos','Permitir o bloquear',"showTab('commands')",'#18c5a0', I_cmd)}
+              ${tile('Añadir jugador','Offline por UUID',"newUser()",'#f5a623', I_userPlus)}
+              ${tile('Gestionar rangos','Editar jerarquías',"showTab('ranks')",'#4d7cfe', I_layers)}
+            </div>
           </div>
-        </div>
-        <div class="panel"><div class="panelHead"><h2>Lista TAB del juego</h2><span class="muted">Opciones de visualización en el TAB de Minecraft</span></div>
-          <div class="list">
-            <div class="listItem"><span class="navIcon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 6s4-4 11-4 11 4 11 4-4 4-11 4-11-4-11-4z"/><circle cx="12" cy="6" r="2"/></svg></span><div><b>Mostrar ping en el TAB</b><div class="muted">Muestra el ping del jugador como texto de color junto a su nombre (ej: §a34ms)</div></div><label class="miniCheck" style="margin:0"><input type="checkbox" id="tabShowPing" ${(state.tabSettings||{}).showPing !== false ? 'checked' : ''} onchange="saveTabSettings()"><span style="font-size:13px">Activo</span></label></div>
-
+          <div class="tabCard">
+            <div class="cardTitle"><h2>Lista TAB</h2></div>
+            <div class="tabRow"><span class="tileIcon">${I_tab}</span><div style="flex:1;min-width:0"><div class="t-name">Mostrar ping</div><div class="t-sub">Ping como texto de color junto al nombre en el TAB del juego</div></div><label class="miniCheck" style="margin:0"><input type="checkbox" id="tabShowPing" ${(state.tabSettings||{}).showPing !== false ? 'checked' : ''} onchange="saveTabSettings()"></label></div>
+          </div>
+          <div class="tableCard">
+            <div class="cardHead"><h2>Rangos del servidor</h2><button class="primary" onclick="newRank()">+ Nuevo rango</button></div>
+            <table class="dataTable"><thead><tr><th>Rango</th><th>Peso</th><th>Prefijo</th><th>Reglas</th><th></th></tr></thead><tbody>${sortedRanks.map(rankTableRow).join('') || '<tr><td colspan="5"><div class="empty">No hay rangos definidos.</div></td></tr>'}</tbody></table>
           </div>
         </div>`;
     }
@@ -128,13 +151,16 @@
       const filter=(document.getElementById('userFilter')?.value || '').toLowerCase();
       const filtered=users.filter(u=>(u.name+u.uuid+(u.ranks||[]).join(' ')).toLowerCase().includes(filter));
       document.getElementById('usersView').innerHTML = `
-        <div class="toolbar"><input id="userFilter" placeholder="Buscar jugador, UUID o rango" value="${escapeAttr(filter)}" oninput="render()"><button onclick="newUser()">Jugador offline</button><button onclick="load()">Actualizar</button></div>
-        <div class="panel"><div class="panelHead"><h2>Jugadores</h2><span class="muted">${filtered.length} visibles</span></div><div class="list">${filtered.map(userRow).join('') || '<div class="empty">Todavía no hay jugadores registrados.</div>'}</div></div>`;
+        <div class="toolbar"><input id="userFilter" placeholder="Buscar jugador, UUID o rango" value="${escapeAttr(filter)}" oninput="render()"><button class="primary" onclick="newUser()">+ Jugador offline</button><button class="ghost" onclick="load()">Actualizar</button></div>
+        <div class="tableCard"><div class="cardHead"><h2>Jugadores</h2><span class="muted">${filtered.length} visibles</span></div>
+          <table class="dataTable"><thead><tr><th>Jugador</th><th>Rango principal</th><th>Rangos</th><th>Estado</th><th></th></tr></thead><tbody>${filtered.map(userRow).join('') || '<tr><td colspan="5"><div class="empty">Todavía no hay jugadores registrados.</div></td></tr>'}</tbody></table></div>`;
     }
     function userRow(u) {
-      return `<div class="listItem"><img class="avatar" src="${headUrl(u)}" onerror="this.src='https://mc-heads.net/avatar/Steve/64'" alt="">
-        <div><div class="row"><b>${escapeHtml(u.name || 'Offline')}</b><span class="pill"><span class="onlineDot ${u.online?'on':''}"></span>${u.online?'Online':'Offline'}</span></div><div class="muted">${escapeHtml(u.uuid)}</div><div class="chips">${(u.ranks||[]).map(r=>`<span class="rankBadge">${escapeHtml(rankLabel(r))}</span>`).join('')}</div></div>
-        <div class="row"><button onclick="editUser('${escapeAttr(u.uuid)}')">Editar</button><button class="danger" onclick="deleteUser('${escapeAttr(u.uuid)}')">Eliminar</button></div></div>`;
+      return `<tr><td><div class="cellUser"><img class="avatar" src="${headUrl(u)}" onerror="this.src='https://mc-heads.net/avatar/Steve/64'" alt=""><div><div class="uName">${escapeHtml(u.name || 'Offline')}</div><div class="uHandle">${escapeHtml(u.uuid)}</div></div></div></td>
+        <td><span class="rankBadge">${escapeHtml(rankLabel(u.primaryRank||''))}</span></td>
+        <td><div class="chips">${(u.ranks||[]).map(r=>`<span class="rankBadge">${escapeHtml(rankLabel(r))}</span>`).join('') || '<span class="muted">—</span>'}</div></td>
+        <td><span class="statusBadge ${u.online?'online':'off'}"><span class="onlineDot ${u.online?'on':''}"></span>${u.online?'Online':'Offline'}</span></td>
+        <td class="right"><div class="tableActions"><button onclick="editUser('${escapeAttr(u.uuid)}')">Editar</button><button class="danger" onclick="deleteUser('${escapeAttr(u.uuid)}')">Eliminar</button></div></td></tr>`;
     }
     function renderRanks(ranks) {
       const q=(document.getElementById('rankSearch')?.value || rankFilter).toLowerCase(); rankFilter=q;
