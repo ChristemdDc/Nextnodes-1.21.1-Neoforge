@@ -4,6 +4,7 @@ import com.nextnodes.permissions.commands.NextNodesCommands;
 import com.nextnodes.permissions.integration.PermissionHandlerEvents;
 import com.nextnodes.permissions.integration.TabListManager;
 import com.nextnodes.permissions.web.WebPanelServer;
+import com.mojang.authlib.GameProfile;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.ParseResults;
 import com.mojang.brigadier.context.CommandContextBuilder;
@@ -34,6 +35,7 @@ import net.neoforged.neoforge.event.CommandEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.ServerChatEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerNegotiationEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.server.command.CommandHelper;
@@ -49,6 +51,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -217,6 +220,39 @@ public final class NextNodesPermissions {
         }
         this.store.close();
         this.server = null;
+    }
+
+    /**
+     * Assigns the player's scoreboard team (prefix/suffix/tag) during login negotiation, on the main
+     * thread, BEFORE the login proceeds — so the vanilla "joined the game" message (broadcast before any
+     * player event exists) already carries the rank prefix. The future always completes, so a failure
+     * here can never hang or block a player's login.
+     */
+    @net.neoforged.bus.api.SubscribeEvent
+    public void onPlayerNegotiation(PlayerNegotiationEvent event) {
+        MinecraftServer currentServer = this.server;
+        TabListManager mgr = this.tabListManager;
+        if (currentServer == null || mgr == null) {
+            return;
+        }
+        GameProfile profile = event.getProfile();
+        if (profile == null || profile.getName() == null || profile.getId() == null) {
+            return;
+        }
+        CompletableFuture<Void> ready = new CompletableFuture<>();
+        try {
+            currentServer.execute(() -> {
+                try {
+                    mgr.apply(currentServer, profile);
+                } catch (Exception ignored) {
+                } finally {
+                    ready.complete(null);
+                }
+            });
+            event.enqueueWork(ready);
+        } catch (Exception ex) {
+            ready.complete(null);
+        }
     }
 
     @net.neoforged.bus.api.SubscribeEvent

@@ -1,5 +1,6 @@
 package com.nextnodes.permissions.integration;
 
+import com.mojang.authlib.GameProfile;
 import com.nextnodes.permissions.PermissionResolver;
 import com.nextnodes.permissions.PrefixFormatter;
 import com.nextnodes.permissions.TabTeamNaming;
@@ -32,24 +33,31 @@ public final class TabListManager {
         if (server == null) {
             return;
         }
-        Scoreboard scoreboard = server.getScoreboard();
-        UUID uuid = player.getUUID();
-        String desiredName = TabTeamNaming.teamName(
-                this.resolver.resolveWeight(uuid),
-                player.getGameProfile().getName(),
-                player.getStringUUID());
+        assign(server.getScoreboard(), player.getUUID(), player.getScoreboardName(), player.getGameProfile().getName());
+    }
 
-        PlayerTeam previous = scoreboard.getPlayersTeam(player.getScoreboardName());
+    /**
+     * Assigns the team from a GameProfile before the player entity exists, so the rank prefix is already
+     * attached when Minecraft broadcasts the "joined the game" message (which fires before any player
+     * event). A player's scoreboard key is their username (Player.getScoreboardName()).
+     */
+    public void apply(MinecraftServer server, GameProfile profile) {
+        if (server == null || profile == null || profile.getName() == null || profile.getId() == null) {
+            return;
+        }
+        assign(server.getScoreboard(), profile.getId(), profile.getName(), profile.getName());
+    }
 
+    private void assign(Scoreboard scoreboard, UUID uuid, String member, String name) {
+        String desiredName = TabTeamNaming.teamName(this.resolver.resolveWeight(uuid), name, uuid.toString());
+        PlayerTeam previous = scoreboard.getPlayersTeam(member);
         PlayerTeam team = scoreboard.getPlayerTeam(desiredName);
         if (team == null) {
             team = scoreboard.addPlayerTeam(desiredName);
         }
         team.setPlayerPrefix(PrefixFormatter.format(this.resolver.resolvePrefix(uuid)));
         team.setPlayerSuffix(buildSuffix(this.resolver.resolveSuffix(uuid), this.resolver.resolveTag(uuid)));
-
-        scoreboard.addPlayerToTeam(player.getScoreboardName(), team);
-
+        scoreboard.addPlayerToTeam(member, team);
         if (previous != null
                 && previous.getName().startsWith(TabTeamNaming.TEAM_PREFIX)
                 && !previous.getName().equals(desiredName)
