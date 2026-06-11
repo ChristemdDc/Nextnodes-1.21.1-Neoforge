@@ -105,6 +105,15 @@ public final class PermissionResolver {
             return defaultRank == null ? 0 : defaultRank.weight;
         }
         List<Rank> order = rankOrder(data, user);
+        // Sort by the weight of the rank that provides the DISPLAYED prefix, so the TAB order matches
+        // the rank shown next to the name. Mirrors resolvePrefix(): a player whose visible prefix is
+        // [ADMIN] — even if it is inherited from a parent or comes from a non-primary rank — sorts at
+        // admin's level instead of at the weight of some lower root rank.
+        for (Rank rank : order) {
+            if (rank.prefix != null && !rank.prefix.isBlank()) {
+                return rank.weight;
+            }
+        }
         return order.isEmpty() ? 0 : order.get(0).weight;
     }
 
