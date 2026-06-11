@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nextnodes-web",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [".claude/web-preview.cjs", "8123"],
+      "port": 8123
+    }
+  ]
+}
