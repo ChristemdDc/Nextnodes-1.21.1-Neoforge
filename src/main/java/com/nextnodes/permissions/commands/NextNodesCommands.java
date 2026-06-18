@@ -2,6 +2,7 @@ package com.nextnodes.permissions.commands;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.nextnodes.permissions.AuditLog;
@@ -225,7 +226,42 @@ public final class NextNodesCommands {
                                         .then(Commands.literal("reset-all")
                                                 .executes(context -> cmdRankCommands(
                                                         context.getSource(),
-                                                        StringArgumentType.getString(context, "rango"), true, true))))))
+                                                        StringArgumentType.getString(context, "rango"), true, true)))))
+                        // /nn rank weight <rango> <peso>
+                        .then(Commands.literal("weight")
+                                .then(Commands.argument("rango", StringArgumentType.word()).suggests(rankSuggestions())
+                                        .then(Commands.argument("peso", IntegerArgumentType.integer())
+                                                .executes(context -> cmdRankWeight(context.getSource(),
+                                                        StringArgumentType.getString(context, "rango"),
+                                                        IntegerArgumentType.getInteger(context, "peso"))))))
+                        // /nn rank prefix <rango> [texto...]   (sin texto = limpiar)
+                        .then(Commands.literal("prefix")
+                                .then(Commands.argument("rango", StringArgumentType.word()).suggests(rankSuggestions())
+                                        .executes(context -> cmdRankDisplay(context.getSource(),
+                                                StringArgumentType.getString(context, "rango"), true, ""))
+                                        .then(Commands.argument("texto", StringArgumentType.greedyString())
+                                                .executes(context -> cmdRankDisplay(context.getSource(),
+                                                        StringArgumentType.getString(context, "rango"), true,
+                                                        StringArgumentType.getString(context, "texto"))))))
+                        // /nn rank suffix <rango> [texto...]   (sin texto = limpiar)
+                        .then(Commands.literal("suffix")
+                                .then(Commands.argument("rango", StringArgumentType.word()).suggests(rankSuggestions())
+                                        .executes(context -> cmdRankDisplay(context.getSource(),
+                                                StringArgumentType.getString(context, "rango"), false, ""))
+                                        .then(Commands.argument("texto", StringArgumentType.greedyString())
+                                                .executes(context -> cmdRankDisplay(context.getSource(),
+                                                        StringArgumentType.getString(context, "rango"), false,
+                                                        StringArgumentType.getString(context, "texto")))))))
+
+                // --- tag (por jugador) ---
+                .then(Commands.literal("tag")
+                        .then(Commands.argument("jugador", StringArgumentType.word()).suggests(playerSuggestions())
+                                .executes(context -> cmdTag(context.getSource(),
+                                        StringArgumentType.getString(context, "jugador"), ""))
+                                .then(Commands.argument("texto", StringArgumentType.greedyString())
+                                        .executes(context -> cmdTag(context.getSource(),
+                                                StringArgumentType.getString(context, "jugador"),
+                                                StringArgumentType.getString(context, "texto"))))))
 
                 // --- perm ---
                 .then(Commands.literal("perm")
@@ -390,6 +426,74 @@ public final class NextNodesCommands {
             return 1;
         } catch (IOException ex) {
             source.sendFailure(Component.literal("Error al guardar el rango: " + ex.getMessage()));
+            return 0;
+        }
+    }
+
+    private int cmdRankWeight(CommandSourceStack source, String rankName, int weight) {
+        String normalized = PermissionModels.normalizeName(rankName);
+        Rank rank = this.mod.store().snapshot().ranks.get(normalized);
+        if (rank == null) {
+            source.sendFailure(Component.literal("El rango '" + normalized + "' no existe. Usa /nn rank list."));
+            return 0;
+        }
+        rank.weight = weight;
+        try {
+            this.mod.store().saveRank(rank);
+            source.sendSuccess(() -> Component.literal("Peso de '" + normalized + "' establecido a " + weight + ".").withStyle(ChatFormatting.GREEN), true);
+            logAudit(source, "rank.weight", "rank", normalized, "weight=" + weight);
+            return 1;
+        } catch (IOException ex) {
+            source.sendFailure(Component.literal("Error al guardar: " + ex.getMessage()));
+            return 0;
+        }
+    }
+
+    private int cmdRankDisplay(CommandSourceStack source, String rankName, boolean isPrefix, String text) {
+        String normalized = PermissionModels.normalizeName(rankName);
+        Rank rank = this.mod.store().snapshot().ranks.get(normalized);
+        if (rank == null) {
+            source.sendFailure(Component.literal("El rango '" + normalized + "' no existe. Usa /nn rank list."));
+            return 0;
+        }
+        String value = text;
+        if (isPrefix && !value.isEmpty() && !value.endsWith(" ")) {
+            value = value + " "; // prefixes need a trailing space before the name
+        }
+        if (isPrefix) {
+            rank.prefix = value;
+        } else {
+            rank.suffix = value;
+        }
+        final String label = isPrefix ? "Prefijo" : "Sufijo";
+        final String shown = value.isBlank() ? "(vacío)" : value;
+        try {
+            this.mod.store().saveRank(rank);
+            source.sendSuccess(() -> Component.literal(label + " de '" + normalized + "' establecido a: " + shown).withStyle(ChatFormatting.GREEN), true);
+            logAudit(source, "rank." + (isPrefix ? "prefix" : "suffix"), "rank", normalized, "value=" + value);
+            return 1;
+        } catch (IOException ex) {
+            source.sendFailure(Component.literal("Error al guardar: " + ex.getMessage()));
+            return 0;
+        }
+    }
+
+    private int cmdTag(CommandSourceStack source, String input, String tag) {
+        UserEntry user = findUser(input, source.getServer());
+        if (user == null) {
+            source.sendFailure(Component.literal("Jugador no encontrado: " + input));
+            return 0;
+        }
+        user.tag = tag;
+        final String display = displayName(user);
+        final String shown = tag.isBlank() ? "(vacío)" : tag;
+        try {
+            this.mod.store().saveUser(user);
+            source.sendSuccess(() -> Component.literal("Tag de " + display + " establecido a: " + shown).withStyle(ChatFormatting.GREEN), true);
+            logAudit(source, "user.tag", "user", user.uuid, "tag=" + tag);
+            return 1;
+        } catch (IOException ex) {
+            source.sendFailure(Component.literal("Error al guardar: " + ex.getMessage()));
             return 0;
         }
     }
