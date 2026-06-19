@@ -51,7 +51,7 @@ public final class WebPanelServer implements AutoCloseable {
     private final AtomicInteger loginAttempts = new AtomicInteger(0);
     private final AtomicLong loginCooldownUntil = new AtomicLong(0);
 
-    private String ip = "localhost";
+    private volatile String ip = "localhost";
     private HttpServer server;
     private volatile String token;
     private volatile String password;
@@ -138,14 +138,19 @@ public final class WebPanelServer implements AutoCloseable {
     }
 
     public void setServerIp(String serverIp) {
-        if (serverIp == null || serverIp.isBlank() || serverIp.equals("0.0.0.0")) {
+        if (serverIp == null || serverIp.isBlank() || serverIp.equals("0.0.0.0")
+                || serverIp.equals("127.0.0.1") || serverIp.equalsIgnoreCase("localhost")) {
+            // No usable host was given (e.g. server-ip is empty so getLocalIp() returns loopback).
+            // Guess from the local interfaces immediately, then refine with the true public IP off-thread.
             this.ip = detectNetworkIp();
+            refinePublicIpAsync();
         } else {
-            this.ip = serverIp;
+            this.ip = serverIp; // explicit host (config webHost / -Dnextnodes.web.host): trust it as-is
         }
     }
 
     private static String detectNetworkIp() {
+        String privateFallback = null;
         try {
             java.util.Enumeration<java.net.NetworkInterface> ifaces =
                     java.net.NetworkInterface.getNetworkInterfaces();
@@ -157,12 +162,62 @@ public final class WebPanelServer implements AutoCloseable {
                     while (addrs.hasMoreElements()) {
                         java.net.InetAddress addr = addrs.nextElement();
                         if (addr.isLoopbackAddress() || !(addr instanceof java.net.Inet4Address)) continue;
+                        if (addr.isSiteLocalAddress() || addr.isLinkLocalAddress()) {
+                            if (privateFallback == null) privateFallback = addr.getHostAddress();
+                            continue; // prefer a public address if the host has one bound directly
+                        }
                         return addr.getHostAddress();
                     }
                 }
             }
         } catch (Exception ignored) {}
-        return "localhost";
+        return privateFallback != null ? privateFallback : "localhost";
+    }
+
+    /** Looks up the true public IP from an external echo service off-thread, then updates {@link #ip}. */
+    private void refinePublicIpAsync() {
+        Thread t = new Thread(() -> {
+            String pub = queryPublicIp();
+            if (pub != null) {
+                this.ip = pub;
+            }
+        }, "nextnodes-ip-detect");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private static String queryPublicIp() {
+        for (String service : new String[]{"https://checkip.amazonaws.com", "https://api.ipify.org"}) {
+            try {
+                java.net.HttpURLConnection conn =
+                        (java.net.HttpURLConnection) java.net.URI.create(service).toURL().openConnection();
+                conn.setConnectTimeout(2500);
+                conn.setReadTimeout(2500);
+                conn.setRequestProperty("User-Agent", "NextNodes");
+                try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(conn.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+                    String line = reader.readLine();
+                    if (line != null && isIpv4(line.trim())) {
+                        return line.trim();
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        return null;
+    }
+
+    private static boolean isIpv4(String value) {
+        String[] parts = value.split("\\.");
+        if (parts.length != 4) return false;
+        for (String part : parts) {
+            try {
+                int n = Integer.parseInt(part);
+                if (n < 0 || n > 255) return false;
+            } catch (NumberFormatException ex) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override

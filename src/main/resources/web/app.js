@@ -36,11 +36,22 @@
     function rankTableRow(r){
       return `<tr><td><div class="cellUser"><div><div class="uName">${escapeHtml(r.displayName||r.name)}</div><div class="uHandle">${escapeHtml(r.name)}</div></div></div></td><td><span class="pill">peso ${r.weight||0}</span></td><td><span style="display:inline-block;background:#1e1b2e;color:#fff;padding:4px 9px;border-radius:7px;font-family:var(--mono);font-size:12px">${prefixHtml(r.prefix||'&7['+r.name+']')}</span></td><td><span class="muted">${(r.permissions||[]).length} reglas</span></td><td class="right"><div class="tableActions"><button onclick="editRankByName('${escapeAttr(r.name)}')">Editar</button><button class="danger" onclick="deleteRank('${escapeAttr(r.name)}')">Eliminar</button></div></td></tr>`;
     }
-    if (token) boot();
+    // Auto-login: clicking the in-game link opens .../?key=CLAVE — log in with it and clean the URL.
+    (function initAuth(){
+      let key = null;
+      try { key = new URLSearchParams(location.search).get('key'); } catch(e){}
+      if (key) {
+        try { history.replaceState(null, '', location.pathname); } catch(e){}
+        login(key);
+      } else if (token) {
+        boot();
+      }
+    })();
 
-    async function login() {
+    async function login(pw) {
       try {
-        const res = await fetch('/api/login', { method:'POST', body: JSON.stringify({ password:document.getElementById('password').value }) });
+        const password = (pw != null) ? pw : document.getElementById('password').value;
+        const res = await fetch('/api/login', { method:'POST', body: JSON.stringify({ password }) });
         if (res.status === 404 || res.status === 501 || res.status === 405) { token = 'test'; localStorage.setItem('nn_token', token); bootDemo(); return; }
         const data = await res.json();
         if (!res.ok) { document.getElementById('loginError').textContent = data.error || 'Contraseña incorrecta'; return; }
