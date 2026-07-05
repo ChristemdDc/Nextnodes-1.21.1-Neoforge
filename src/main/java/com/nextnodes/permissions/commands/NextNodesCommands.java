@@ -302,7 +302,37 @@ public final class NextNodesCommands {
                 .then(Commands.literal("export")
                         .executes(context -> cmdExport(context.getSource())))
                 .then(Commands.literal("import")
-                        .executes(context -> cmdImport(context.getSource()))));
+                        .executes(context -> cmdImport(context.getSource())))
+
+                // --- baneos ---
+                .then(Commands.literal("ban")
+                        .then(Commands.argument("jugador", StringArgumentType.word()).suggests(playerSuggestions())
+                                .executes(ctx -> cmdBan(ctx.getSource(), StringArgumentType.getString(ctx, "jugador"), "perm", ""))
+                                .then(Commands.argument("duracion", StringArgumentType.word())
+                                        .executes(ctx -> cmdBan(ctx.getSource(), StringArgumentType.getString(ctx, "jugador"),
+                                                StringArgumentType.getString(ctx, "duracion"), ""))
+                                        .then(Commands.argument("razon", StringArgumentType.greedyString())
+                                                .executes(ctx -> cmdBan(ctx.getSource(), StringArgumentType.getString(ctx, "jugador"),
+                                                        StringArgumentType.getString(ctx, "duracion"),
+                                                        StringArgumentType.getString(ctx, "razon")))))))
+                .then(Commands.literal("ban-ip")
+                        .then(Commands.argument("ip", StringArgumentType.word())
+                                .executes(ctx -> cmdBanIp(ctx.getSource(), StringArgumentType.getString(ctx, "ip"), "perm", ""))
+                                .then(Commands.argument("duracion", StringArgumentType.word())
+                                        .executes(ctx -> cmdBanIp(ctx.getSource(), StringArgumentType.getString(ctx, "ip"),
+                                                StringArgumentType.getString(ctx, "duracion"), ""))
+                                        .then(Commands.argument("razon", StringArgumentType.greedyString())
+                                                .executes(ctx -> cmdBanIp(ctx.getSource(), StringArgumentType.getString(ctx, "ip"),
+                                                        StringArgumentType.getString(ctx, "duracion"),
+                                                        StringArgumentType.getString(ctx, "razon")))))))
+                .then(Commands.literal("unban")
+                        .then(Commands.argument("objetivo", StringArgumentType.word())
+                                .executes(ctx -> cmdUnban(ctx.getSource(), StringArgumentType.getString(ctx, "objetivo")))))
+                .then(Commands.literal("bans")
+                        .executes(ctx -> cmdBans(ctx.getSource())))
+                .then(Commands.literal("alts")
+                        .then(Commands.argument("objetivo", StringArgumentType.word())
+                                .executes(ctx -> cmdAlts(ctx.getSource(), StringArgumentType.getString(ctx, "objetivo"))))));
     }
 
     // -------------------------------------------------------------------------
@@ -607,6 +637,75 @@ public final class NextNodesCommands {
             source.sendFailure(Component.literal("Error al importar: " + ex.getMessage()));
             return 0;
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Baneos
+    // -------------------------------------------------------------------------
+
+    private int cmdBan(CommandSourceStack source, String player, String duration, String reason) {
+        var bans = this.mod.banStore();
+        if (bans == null) { source.sendFailure(Component.literal("Baneos no disponibles.")); return 0; }
+        long now = System.currentTimeMillis();
+        Long expiresAt;
+        try { expiresAt = com.nextnodes.permissions.ban.BanDuration.expiresAt(duration, now); }
+        catch (IllegalArgumentException ex) { source.sendFailure(Component.literal(ex.getMessage())); return 0; }
+        // Resolver UUID por nombre entre los conocidos (jugadores online o el store de perfiles).
+        ServerPlayer online = source.getServer().getPlayerList().getPlayerByName(player);
+        String uuid = online != null ? online.getUUID().toString() : null;
+        String issuer = source.getTextName();
+        var ban = bans.banAccount(uuid, player, reason.isBlank() ? "Sin razón" : reason, issuer, expiresAt, now);
+        if (online != null) online.connection.disconnect(NextNodesPermissions.banScreen(ban));
+        final String ipMsg = ban.ip != null ? " (+ IP " + ban.ip + ")" : " (sin IP conocida)";
+        source.sendSuccess(() -> Component.literal("Baneado " + player + ipMsg + ".").withStyle(ChatFormatting.RED), true);
+        return 1;
+    }
+
+    private int cmdBanIp(CommandSourceStack source, String ip, String duration, String reason) {
+        var bans = this.mod.banStore();
+        if (bans == null) { source.sendFailure(Component.literal("Baneos no disponibles.")); return 0; }
+        long now = System.currentTimeMillis();
+        Long expiresAt;
+        try { expiresAt = com.nextnodes.permissions.ban.BanDuration.expiresAt(duration, now); }
+        catch (IllegalArgumentException ex) { source.sendFailure(Component.literal(ex.getMessage())); return 0; }
+        bans.banIp(ip, reason.isBlank() ? "Sin razón" : reason, source.getTextName(), expiresAt, now);
+        this.mod.enforceOnAllOnline();
+        source.sendSuccess(() -> Component.literal("IP baneada: " + ip).withStyle(ChatFormatting.RED), true);
+        return 1;
+    }
+
+    private int cmdUnban(CommandSourceStack source, String target) {
+        var bans = this.mod.banStore();
+        if (bans == null) { source.sendFailure(Component.literal("Baneos no disponibles.")); return 0; }
+        int n = bans.unban(target, source.getTextName(), System.currentTimeMillis());
+        if (n == 0) { source.sendFailure(Component.literal("No había baneos activos para: " + target)); return 0; }
+        source.sendSuccess(() -> Component.literal("Desbaneado: " + target + " (" + n + ")").withStyle(ChatFormatting.GREEN), true);
+        return 1;
+    }
+
+    private int cmdBans(CommandSourceStack source) {
+        var bans = this.mod.banStore();
+        if (bans == null) { source.sendFailure(Component.literal("Baneos no disponibles.")); return 0; }
+        var active = bans.listActive(System.currentTimeMillis());
+        if (active.isEmpty()) { source.sendSuccess(() -> Component.literal("No hay baneos activos."), false); return 1; }
+        source.sendSuccess(() -> Component.literal("Baneos activos: " + active.size()).withStyle(ChatFormatting.AQUA), false);
+        for (var b : active) {
+            String who = b.type.equals("ip") ? "IP " + b.ip : b.targetName + (b.ip != null ? " (" + b.ip + ")" : "");
+            String exp = b.expiresAt == null ? "permanente" : "hasta " + b.expiresAt;
+            source.sendSuccess(() -> Component.literal("• " + who + " — " + b.reason + " [" + exp + "]"), false);
+        }
+        return 1;
+    }
+
+    private int cmdAlts(CommandSourceStack source, String target) {
+        var bans = this.mod.banStore();
+        if (bans == null) { source.sendFailure(Component.literal("Baneos no disponibles.")); return 0; }
+        String ip = bans.lastIpOf(target);
+        if (ip == null) { source.sendFailure(Component.literal("Sin IP conocida para: " + target)); return 0; }
+        var accounts = bans.accountsForIp(ip);
+        source.sendSuccess(() -> Component.literal("Cuentas desde " + ip + ": " + accounts.size()).withStyle(ChatFormatting.AQUA), false);
+        for (var a : accounts) source.sendSuccess(() -> Component.literal("• " + a.name), false);
+        return 1;
     }
 
     // -------------------------------------------------------------------------
