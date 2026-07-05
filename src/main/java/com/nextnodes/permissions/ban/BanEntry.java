@@ -67,6 +67,8 @@ public final class BanEntry {
         b.reason = d.getString("reason");
         b.issuer = d.getString("issuer");
         b.createdAt = d.get("createdAt") instanceof Number n ? n.longValue() : 0L;
+        // toDocument() always writes "active", so a missing key defaulting to false is not
+        // reachable via our own writers; the null-safe read only guards foreign/legacy docs.
         b.active = Boolean.TRUE.equals(d.getBoolean("active"));
         b.expiresAt = d.get("expiresAt") instanceof Number e ? e.longValue() : null;
         b.unbannedAt = d.get("unbannedAt") instanceof Number u ? u.longValue() : null;

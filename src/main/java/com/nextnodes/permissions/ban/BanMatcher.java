@@ -11,6 +11,8 @@ public final class BanMatcher {
         if (bans == null) return null;
         for (BanEntry b : bans) {
             if (!b.isActiveAt(now)) continue;
+            // Asymmetric guards are intentional: uuid only needs a null check, but ip may
+            // legitimately be blank/empty for offline players, so it must also be rejected here.
             if (uuid != null && uuid.equals(b.targetUuid)) return b;
             if (ip != null && !ip.isBlank() && ip.equals(b.ip)) return b;
         }

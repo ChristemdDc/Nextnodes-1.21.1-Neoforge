@@ -25,4 +25,8 @@ class BanDurationTest {
         assertThrows(IllegalArgumentException.class, () -> BanDuration.expiresAt("5", NOW));
         assertThrows(IllegalArgumentException.class, () -> BanDuration.expiresAt("0d", NOW));
     }
+
+    @Test void rejectsAbsurdlyLongDuration() {
+        assertThrows(IllegalArgumentException.class, () -> BanDuration.expiresAt("999999999999999999w", NOW));
+    }
 }

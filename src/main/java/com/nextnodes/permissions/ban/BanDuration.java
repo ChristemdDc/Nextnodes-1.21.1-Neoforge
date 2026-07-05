@@ -2,7 +2,12 @@ package com.nextnodes.permissions.ban;
 
 import java.util.Locale;
 
-/** Parses ban durations like "1h", "7d", "perm" into an absolute expiry timestamp. */
+/**
+ * Parses ban durations like "1h", "7d", "perm" into an absolute expiry timestamp.
+ *
+ * <p>Intentionally a single-unit (+ "perm") parser, distinct from
+ * {@code NextNodesCommands.parseDuration} per the spec — do not merge them.
+ */
 public final class BanDuration {
     private BanDuration() {}
 
@@ -32,6 +37,9 @@ public final class BanDuration {
             case 'w' -> 7L * 86_400_000L;
             default -> throw new IllegalArgumentException("Unidad inválida (usa m/h/d/w): " + input);
         };
+        if (amount > (Long.MAX_VALUE - now) / unitMs) {
+            throw new IllegalArgumentException("Duración demasiado larga: " + input);
+        }
         return now + amount * unitMs;
     }
 }

@@ -33,4 +33,15 @@ class BanEntryTest {
         assertEquals(Long.valueOf(NOW + 5000L), back.expiresAt);
         assertTrue(back.active);
     }
+
+    @Test void roundTripsPermanentBan() {
+        BanEntry b = BanEntry.account("id4", "uuid4", "Zoe", "1.1.1.1", "griefing", "consola", NOW, null);
+        BanEntry back = BanEntry.fromDocument(b.toDocument());
+        assertNull(back.expiresAt);
+        assertNull(back.unbannedAt);
+        assertNull(back.unbannedBy);
+        assertNull(back.endReason);
+        assertTrue(back.active);
+        assertEquals("uuid4", back.targetUuid);
+    }
 }
