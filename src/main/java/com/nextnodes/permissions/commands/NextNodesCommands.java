@@ -656,7 +656,10 @@ public final class NextNodesCommands {
         String issuer = source.getTextName();
         var ban = bans.banAccount(uuid, player, reason.isBlank() ? "Sin razón" : reason, issuer, expiresAt, now);
         if (online != null) online.connection.disconnect(NextNodesPermissions.banScreen(ban));
-        final String ipMsg = ban.ip != null ? " (+ IP " + ban.ip + ")" : " (sin IP conocida)";
+        final String ipMsg;
+        if (ban.ip != null) ipMsg = " (+ IP " + ban.ip + ")";
+        else if (uuid == null) ipMsg = " (sin IP conocida — no bloqueará hasta que tenga una IP registrada)";
+        else ipMsg = " (sin IP conocida)";
         source.sendSuccess(() -> Component.literal("Baneado " + player + ipMsg + ".").withStyle(ChatFormatting.RED), true);
         return 1;
     }
@@ -664,6 +667,7 @@ public final class NextNodesCommands {
     private int cmdBanIp(CommandSourceStack source, String ip, String duration, String reason) {
         var bans = this.mod.banStore();
         if (bans == null) { source.sendFailure(Component.literal("Baneos no disponibles.")); return 0; }
+        if (!looksLikeIp(ip)) { source.sendFailure(Component.literal("IP inválida: " + ip)); return 0; }
         long now = System.currentTimeMillis();
         Long expiresAt;
         try { expiresAt = com.nextnodes.permissions.ban.BanDuration.expiresAt(duration, now); }
@@ -688,12 +692,14 @@ public final class NextNodesCommands {
         if (bans == null) { source.sendFailure(Component.literal("Baneos no disponibles.")); return 0; }
         var active = bans.listActive(System.currentTimeMillis());
         if (active.isEmpty()) { source.sendSuccess(() -> Component.literal("No hay baneos activos."), false); return 1; }
-        source.sendSuccess(() -> Component.literal("Baneos activos: " + active.size()).withStyle(ChatFormatting.AQUA), false);
+        MutableComponent msg = Component.literal("Baneos activos: " + active.size()).withStyle(ChatFormatting.AQUA);
         for (var b : active) {
-            String who = b.type.equals("ip") ? "IP " + b.ip : b.targetName + (b.ip != null ? " (" + b.ip + ")" : "");
-            String exp = b.expiresAt == null ? "permanente" : "hasta " + b.expiresAt;
-            source.sendSuccess(() -> Component.literal("• " + who + " — " + b.reason + " [" + exp + "]"), false);
+            String who = "ip".equals(b.type) ? "IP " + b.ip : b.targetName + (b.ip != null ? " (" + b.ip + ")" : "");
+            String exp = b.expiresAt == null ? "permanente" : "hasta " + formatTs(b.expiresAt);
+            msg.append(Component.literal("\n• " + who + " — " + (b.reason == null ? "" : b.reason) + " [" + exp + "]"));
         }
+        final MutableComponent out = msg;
+        source.sendSuccess(() -> out, false);
         return 1;
     }
 
@@ -703,9 +709,29 @@ public final class NextNodesCommands {
         String ip = bans.lastIpOf(target);
         if (ip == null) { source.sendFailure(Component.literal("Sin IP conocida para: " + target)); return 0; }
         var accounts = bans.accountsForIp(ip);
-        source.sendSuccess(() -> Component.literal("Cuentas desde " + ip + ": " + accounts.size()).withStyle(ChatFormatting.AQUA), false);
-        for (var a : accounts) source.sendSuccess(() -> Component.literal("• " + a.name), false);
+        MutableComponent msg = Component.literal("Cuentas desde " + ip + ": " + accounts.size()).withStyle(ChatFormatting.AQUA);
+        for (var a : accounts) msg.append(Component.literal("\n• " + a.name));
+        final MutableComponent out = msg;
+        source.sendSuccess(() -> out, false);
         return 1;
+    }
+
+    private static String formatTs(long epochMs) {
+        return DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+                .format(java.time.LocalDateTime.ofInstant(
+                        java.time.Instant.ofEpochMilli(epochMs), java.time.ZoneId.systemDefault()));
+    }
+
+    private static boolean looksLikeIp(String s) {
+        if (s == null || s.isBlank()) return false;
+        if (s.indexOf(':') >= 0) return s.length() >= 2; // IPv6-ish, accept
+        String[] p = s.split("\\.");
+        if (p.length != 4) return false;
+        for (String x : p) {
+            try { int n = Integer.parseInt(x); if (n < 0 || n > 255) return false; }
+            catch (NumberFormatException e) { return false; }
+        }
+        return true;
     }
 
     // -------------------------------------------------------------------------
