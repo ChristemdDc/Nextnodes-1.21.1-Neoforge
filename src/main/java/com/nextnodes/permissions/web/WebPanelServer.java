@@ -142,6 +142,9 @@ public final class WebPanelServer implements AutoCloseable {
         this.banStore = banStore;
     }
 
+    private Runnable banEnforcer;
+    public void setBanEnforcer(Runnable banEnforcer) { this.banEnforcer = banEnforcer; }
+
     public void setServerIp(String serverIp) {
         if (serverIp == null || serverIp.isBlank() || serverIp.equals("0.0.0.0")
                 || serverIp.equals("127.0.0.1") || serverIp.equalsIgnoreCase("localhost")) {
@@ -524,6 +527,10 @@ public final class WebPanelServer implements AutoCloseable {
             this.banStore.banAccount(uuid, name, reason, "panel web", expiresAt, now);
         }
         broadcastChanged();
+        // Kick the target if they're online on THIS server. broadcastChanged()/publishSyncEvent only
+        // refresh panels + other servers; the issuing server's own sync listener skips its own event,
+        // so without this an account/IP ban from the web wouldn't disconnect a locally-online player.
+        if (this.banEnforcer != null) this.banEnforcer.run();
         if (this.auditLog != null) this.auditLog.log("web-panel", "web-panel", "ban.create", type, optString(body, "ip", optString(body, "name", "")), reason);
         sendJson(exchange, 200, ok());
     }

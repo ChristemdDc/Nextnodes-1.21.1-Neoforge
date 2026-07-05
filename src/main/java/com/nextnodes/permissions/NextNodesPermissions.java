@@ -201,6 +201,9 @@ public final class NextNodesPermissions {
         this.webPanel.setAuditLog(this.auditLog);
         this.webPanel.setRankHistoryLog(this.rankHistoryLog);
         this.webPanel.setBanStore(this.banStore);
+        // A web-issued ban must also kick a target online on THIS server (enforceOnAllOnline hops to the
+        // main thread and is null-safe + idempotent, so it's safe to invoke from the web request thread).
+        this.webPanel.setBanEnforcer(this::enforceOnAllOnline);
         this.webPanel.setOnSessionExpired(() -> {
             LOGGER.info("NextNodes Permissions web panel session expired");
         });
