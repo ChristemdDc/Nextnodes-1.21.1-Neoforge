@@ -106,6 +106,8 @@ public final class NextNodesPermissions {
         this.auditLog = new AuditLog(this.store);
         this.rankHistoryLog = new RankHistoryLog(this.store);
         this.store.addChangeListener(this::refreshOnlinePlayers);
+        // Fires on every store change (incl. cross-server sync reloads) — intentionally broad so a
+        // ban synced from another server kicks matching online players here. Idempotent per player.
         this.store.addChangeListener(this::enforceOnAllOnline);
         this.store.addOnlineChangeListener(this::refreshOnlinePlayerNames);
         this.store.addUserSavedListener(this::onUserSaved);
@@ -254,6 +256,8 @@ public final class NextNodesPermissions {
             String ip = extractIp(event.getConnection());
             long now = System.currentTimeMillis();
             bans.recordIp(profile.getId().toString(), profile.getName(), ip, now);
+            // Fail-open: findBlockingBan returns null on any Mongo error, so a DB outage lets
+            // logins through rather than locking the whole server out.
             com.nextnodes.permissions.ban.BanEntry blocking =
                     bans.findBlockingBan(profile.getId().toString(), ip, now);
             if (blocking != null) {
@@ -288,6 +292,21 @@ public final class NextNodesPermissions {
         String name = event.getEntity().getGameProfile().getName();
         MinecraftServer currentServer = this.server;
         DB_EXECUTOR.execute(() -> {
+            // Defense-in-depth: a ban written in the tiny window between the negotiation check and
+            // full login would otherwise slip through. Re-check off-thread; kick on the main thread
+            // (this path sends a real disconnect packet, so the ban screen renders correctly).
+            if (this.banStore != null && currentServer != null) {
+                String ip = this.banStore.lastIpOf(uuid.toString());
+                com.nextnodes.permissions.ban.BanEntry ban =
+                        this.banStore.findBlockingBan(uuid.toString(), ip, System.currentTimeMillis());
+                if (ban != null) {
+                    currentServer.execute(() -> {
+                        net.minecraft.server.level.ServerPlayer p = currentServer.getPlayerList().getPlayer(uuid);
+                        if (p != null) p.connection.disconnect(banScreen(ban));
+                    });
+                    return; // banned — skip profile touch/refresh
+                }
+            }
             try {
                 this.store.touchPlayer(uuid, name, true);
             } catch (IOException ex) {
@@ -612,10 +631,10 @@ public final class NextNodesPermissions {
         if (ban.expiresAt == null) {
             sb.append("\n§7Duración: §fpermanente");
         } else {
+            java.time.ZonedDateTime zdt = java.time.Instant.ofEpochMilli(ban.expiresAt)
+                    .atZone(java.time.ZoneId.systemDefault());
             sb.append("\n§7Expira: §f").append(
-                    java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
-                        .format(java.time.LocalDateTime.ofInstant(
-                            java.time.Instant.ofEpochMilli(ban.expiresAt), java.time.ZoneId.systemDefault())));
+                    java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm z").format(zdt));
         }
         return net.minecraft.network.chat.Component.literal(sb.toString());
     }
