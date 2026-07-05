@@ -3,8 +3,10 @@ package com.nextnodes.permissions.ban;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Filters;
+import com.mongodb.client.model.Indexes;
 import com.mongodb.client.model.ReplaceOptions;
 import com.mongodb.client.model.Sorts;
+import com.mongodb.client.model.UpdateOptions;
 import com.mongodb.client.model.Updates;
 import com.nextnodes.permissions.PermissionStore;
 import org.bson.Document;
@@ -24,6 +26,19 @@ public final class BanStore {
 
     public BanStore(PermissionStore permissions) {
         this.permissions = permissions;
+        ensureIndexes();
+    }
+
+    /** Best-effort indexes so per-login ban lookups don't collection-scan. Idempotent. */
+    private void ensureIndexes() {
+        try {
+            MongoDatabase db = this.permissions.database();
+            if (db == null) return;
+            MongoCollection<Document> bans = db.getCollection(COL_BANS);
+            bans.createIndex(Indexes.ascending("active"));
+            bans.createIndex(Indexes.ascending("targetUuid"));
+            bans.createIndex(Indexes.ascending("ip"));
+        } catch (Exception ignored) {}
     }
 
     private MongoCollection<Document> col(String name) {
@@ -34,25 +49,23 @@ public final class BanStore {
 
     // ---- IP history -------------------------------------------------------
 
-    /** Records that {@code uuid}/{@code name} connected from {@code ip}. Called on login. */
+    /** Records that {@code uuid}/{@code name} connected from {@code ip}. Called on login.
+     *  Atomic per-field update (no read-modify-write) so concurrent logins from the same
+     *  player can't lose an IP entry. Key encoding assumes IPv4 (dots -> underscores). */
     public void recordIp(String uuid, String name, String ip, long now) {
         if (uuid == null || ip == null || ip.isBlank()) return;
+        String base = "ipsByAddr." + ip.replace('.', '_');
         try {
-            Document existing = col(COL_PLAYER_IPS).find(Filters.eq("_id", uuid)).first();
-            Document ipsSub = existing == null ? null : existing.get("ipsByAddr", Document.class);
-            Document ipMap = ipsSub != null ? ipsSub : new Document();
-            Document entry = ipMap.get(ip.replace('.', '_'), Document.class);
-            if (entry == null) {
-                entry = new Document("ip", ip).append("firstSeen", now).append("count", 0L);
-            }
-            entry.append("lastSeen", now).append("count",
-                    (entry.get("count") instanceof Number c ? c.longValue() : 0L) + 1L);
-            ipMap.put(ip.replace('.', '_'), entry);
-            Document doc = new Document("_id", uuid)
-                    .append("name", name)
-                    .append("lastIp", ip)
-                    .append("ipsByAddr", ipMap);
-            col(COL_PLAYER_IPS).replaceOne(Filters.eq("_id", uuid), doc, new ReplaceOptions().upsert(true));
+            col(COL_PLAYER_IPS).updateOne(
+                    Filters.eq("_id", uuid),
+                    Updates.combine(
+                            Updates.set("name", name),
+                            Updates.set("lastIp", ip),
+                            Updates.set(base + ".ip", ip),
+                            Updates.set(base + ".lastSeen", now),
+                            Updates.min(base + ".firstSeen", now),
+                            Updates.inc(base + ".count", 1L)),
+                    new UpdateOptions().upsert(true));
         } catch (Exception ignored) {}
     }
 
