@@ -667,7 +667,7 @@ public final class NextNodesCommands {
     private int cmdBanIp(CommandSourceStack source, String ip, String duration, String reason) {
         var bans = this.mod.banStore();
         if (bans == null) { source.sendFailure(Component.literal("Baneos no disponibles.")); return 0; }
-        if (!looksLikeIp(ip)) { source.sendFailure(Component.literal("IP inválida: " + ip)); return 0; }
+        if (!com.nextnodes.permissions.ban.IpFormat.looksLikeIp(ip)) { source.sendFailure(Component.literal("IP inválida: " + ip)); return 0; }
         long now = System.currentTimeMillis();
         Long expiresAt;
         try { expiresAt = com.nextnodes.permissions.ban.BanDuration.expiresAt(duration, now); }
@@ -720,18 +720,6 @@ public final class NextNodesCommands {
         return DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
                 .format(java.time.LocalDateTime.ofInstant(
                         java.time.Instant.ofEpochMilli(epochMs), java.time.ZoneId.systemDefault()));
-    }
-
-    private static boolean looksLikeIp(String s) {
-        if (s == null || s.isBlank()) return false;
-        if (s.indexOf(':') >= 0) return s.length() >= 2; // IPv6-ish, accept
-        String[] p = s.split("\\.");
-        if (p.length != 4) return false;
-        for (String x : p) {
-            try { int n = Integer.parseInt(x); if (n < 0 || n > 255) return false; }
-            catch (NumberFormatException e) { return false; }
-        }
-        return true;
     }
 
     // -------------------------------------------------------------------------

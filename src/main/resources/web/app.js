@@ -264,7 +264,7 @@
         <td><span class="pill">${escapeHtml(b.type === 'ip' ? 'IP' : 'Cuenta')}</span></td>
         <td>${escapeHtml(b.reason || '')}</td>
         <td class="muted">${escapeHtml(b.issuer || '')}</td>
-        <td class="muted">${exp}</td>
+        <td class="muted">${escapeHtml(exp)}</td>
         <td class="right"><div class="tableActions"><button class="danger" onclick="unbanId('${escapeAttr(b.id)}')">Quitar</button></div></td></tr>`;
     }
     function banLogRow(e) {

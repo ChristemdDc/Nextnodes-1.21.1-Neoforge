@@ -515,6 +515,7 @@ public final class WebPanelServer implements AutoCloseable {
         if ("ip".equals(type)) {
             String ip = optString(body, "ip", "");
             if (ip.isBlank()) { sendJson(exchange, 400, error("ip requerida")); return; }
+            if (!com.nextnodes.permissions.ban.IpFormat.looksLikeIp(ip)) { sendJson(exchange, 400, error("IP inválida: " + ip)); return; }
             this.banStore.banIp(ip, reason, "panel web", expiresAt, now);
         } else {
             String name = optString(body, "name", "");
