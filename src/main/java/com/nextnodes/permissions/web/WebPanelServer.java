@@ -60,6 +60,7 @@ public final class WebPanelServer implements AutoCloseable {
     private Runnable onSessionExpired;
     private AuditLog auditLog;
     private RankHistoryLog historyLog;
+    private com.nextnodes.permissions.ban.BanStore banStore;
 
     public WebPanelServer(PermissionStore store, int port, Supplier<List<CommandInfo>> commandSupplier) {
         this.store = store;
@@ -135,6 +136,10 @@ public final class WebPanelServer implements AutoCloseable {
 
     public void setRankHistoryLog(RankHistoryLog historyLog) {
         this.historyLog = historyLog;
+    }
+
+    public void setBanStore(com.nextnodes.permissions.ban.BanStore banStore) {
+        this.banStore = banStore;
     }
 
     public void setServerIp(String serverIp) {
@@ -423,6 +428,24 @@ public final class WebPanelServer implements AutoCloseable {
                 sendJson(exchange, 200, resp);
                 return;
             }
+            // --- bans ---
+            if (path.equals("/api/bans") && method.equals("GET")) {
+                handleBansList(exchange);
+                return;
+            }
+            if (path.equals("/api/bans") && method.equals("POST")) {
+                handleBanCreate(exchange);
+                return;
+            }
+            if (path.startsWith("/api/bans/") && method.equals("DELETE")) {
+                handleBanDelete(exchange, path.substring("/api/bans/".length()));
+                return;
+            }
+            if (path.equals("/api/alts") && method.equals("GET")) {
+                String ip = extractParam(exchange.getRequestURI().getQuery(), "ip");
+                handleAlts(exchange, ip);
+                return;
+            }
             sendJson(exchange, 404, error("not found"));
         } catch (Exception ex) {
             sendJson(exchange, 500, error(ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage()));
@@ -458,6 +481,112 @@ public final class WebPanelServer implements AutoCloseable {
                 sendJson(exchange, 401, error("Contrase\u00f1a incorrecta (" + (MAX_LOGIN_ATTEMPTS - attempts) + " intentos restantes)"));
             }
         }
+    }
+
+    // --- bans ---
+
+    private void handleBansList(HttpExchange exchange) throws IOException {
+        if (this.banStore == null) { sendJson(exchange, 200, emptyBansPayload()); return; }
+        long now = System.currentTimeMillis();
+        JsonArray active = new JsonArray();
+        for (var b : this.banStore.listActive(now)) active.add(banJson(b));
+        JsonArray log = new JsonArray();
+        for (var e : this.banStore.listLog(200)) log.add(logJson(e));
+        JsonObject out = new JsonObject();
+        out.add("active", active);
+        out.add("log", log);
+        sendJson(exchange, 200, out);
+    }
+
+    private void handleBanCreate(HttpExchange exchange) throws IOException {
+        if (this.banStore == null) { sendJson(exchange, 503, error("Baneos no disponibles")); return; }
+        JsonObject body = readJson(exchange);
+        String type = optString(body, "type", "account");
+        String reason = optString(body, "reason", "Sin razón");
+        String duration = optString(body, "duration", "perm");
+        long now = System.currentTimeMillis();
+        Long expiresAt;
+        try {
+            expiresAt = com.nextnodes.permissions.ban.BanDuration.expiresAt(duration, now);
+        } catch (IllegalArgumentException ex) {
+            sendJson(exchange, 400, error(ex.getMessage()));
+            return;
+        }
+        if ("ip".equals(type)) {
+            String ip = optString(body, "ip", "");
+            if (ip.isBlank()) { sendJson(exchange, 400, error("ip requerida")); return; }
+            this.banStore.banIp(ip, reason, "panel web", expiresAt, now);
+        } else {
+            String name = optString(body, "name", "");
+            String uuid = optString(body, "uuid", null);
+            if (name.isBlank() && uuid == null) { sendJson(exchange, 400, error("jugador requerido")); return; }
+            this.banStore.banAccount(uuid, name, reason, "panel web", expiresAt, now);
+        }
+        broadcastChanged();
+        if (this.auditLog != null) this.auditLog.log("web-panel", "web-panel", "ban.create", type, optString(body, "ip", optString(body, "name", "")), reason);
+        sendJson(exchange, 200, ok());
+    }
+
+    private void handleBanDelete(HttpExchange exchange, String id) throws IOException {
+        if (this.banStore == null) { sendJson(exchange, 503, error("Baneos no disponibles")); return; }
+        boolean lifted = this.banStore.unbanById(decodeSegment(id), "panel web", System.currentTimeMillis());
+        if (!lifted) { sendJson(exchange, 404, error("no encontrado")); return; }
+        broadcastChanged();
+        if (this.auditLog != null) this.auditLog.log("web-panel", "web-panel", "ban.delete", "", id, "");
+        sendJson(exchange, 200, ok());
+    }
+
+    private void handleAlts(HttpExchange exchange, String ip) throws IOException {
+        JsonArray arr = new JsonArray();
+        if (ip != null && this.banStore != null) {
+            for (var a : this.banStore.accountsForIp(ip)) {
+                JsonObject o = new JsonObject();
+                o.addProperty("uuid", a.uuid);
+                o.addProperty("name", a.name);
+                o.addProperty("lastIp", a.lastIp);
+                arr.add(o);
+            }
+        }
+        JsonObject out = new JsonObject();
+        out.add("accounts", arr);
+        sendJson(exchange, 200, out);
+    }
+
+    private static JsonObject emptyBansPayload() {
+        JsonObject out = new JsonObject();
+        out.add("active", new JsonArray());
+        out.add("log", new JsonArray());
+        return out;
+    }
+
+    private static JsonObject banJson(com.nextnodes.permissions.ban.BanEntry b) {
+        JsonObject o = new JsonObject();
+        o.addProperty("id", b.id);
+        o.addProperty("type", b.type);
+        o.addProperty("targetName", b.targetName);
+        o.addProperty("ip", b.ip);
+        o.addProperty("reason", b.reason);
+        o.addProperty("issuer", b.issuer);
+        o.addProperty("createdAt", b.createdAt);
+        if (b.expiresAt != null) o.addProperty("expiresAt", b.expiresAt);
+        return o;
+    }
+
+    private static JsonObject logJson(com.nextnodes.permissions.ban.BanLogEntry e) {
+        JsonObject o = new JsonObject();
+        o.addProperty("ts", e.ts);
+        o.addProperty("action", e.action);
+        o.addProperty("type", e.type);
+        o.addProperty("target", e.target);
+        o.addProperty("targetName", e.targetName);
+        o.addProperty("ip", e.ip);
+        o.addProperty("reason", e.reason);
+        o.addProperty("issuer", e.issuer);
+        return o;
+    }
+
+    private static String optString(JsonObject o, String key, String def) {
+        return o != null && o.has(key) && !o.get(key).isJsonNull() ? o.get(key).getAsString() : def;
     }
 
     private void handleEvents(HttpExchange exchange) throws IOException {

@@ -200,6 +200,7 @@ public final class NextNodesPermissions {
         this.webPanel.setServerIp(this.config.webHost.isBlank() ? event.getServer().getLocalIp() : this.config.webHost);
         this.webPanel.setAuditLog(this.auditLog);
         this.webPanel.setRankHistoryLog(this.rankHistoryLog);
+        this.webPanel.setBanStore(this.banStore);
         this.webPanel.setOnSessionExpired(() -> {
             LOGGER.info("NextNodes Permissions web panel session expired");
         });
