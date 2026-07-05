@@ -546,6 +546,11 @@ public final class PermissionStore {
         return this.database.getCollection(name);
     }
 
+    /** Publishes a sync event so other servers reload. Public wrapper over the private publishEvent. */
+    public void publishSyncEvent(String type, String key) {
+        publishEvent(type, key);
+    }
+
     private PermissionData readAll() {
         PermissionData pd = new PermissionData();
 
@@ -773,10 +778,11 @@ public final class PermissionStore {
     }
 
     // -------------------------------------------------------------------------
-    // Package-private: used by AuditLog and RankHistoryLog
+    // Used by AuditLog, RankHistoryLog (same package) and BanStore (com.nextnodes.permissions.ban)
     // -------------------------------------------------------------------------
 
-    MongoDatabase database() {
+    /** Exposes the live MongoDB handle for sibling stores (e.g. BanStore). May be null before load(). */
+    public MongoDatabase database() {
         return this.database;
     }
 }
