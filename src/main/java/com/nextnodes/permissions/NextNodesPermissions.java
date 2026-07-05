@@ -78,6 +78,7 @@ public final class NextNodesPermissions {
     private final RankHistoryLog rankHistoryLog;
     private final TabListManager tabListManager;
     private final NextNodesConfig config;
+    private com.nextnodes.permissions.ban.BanStore banStore;
     /** Tracks each online player's primaryRank to detect changes and notify them. */
     private final Map<UUID, String> prevPrimaryRanks = new ConcurrentHashMap<>();
     private MinecraftServer server;
@@ -105,6 +106,7 @@ public final class NextNodesPermissions {
         this.auditLog = new AuditLog(this.store);
         this.rankHistoryLog = new RankHistoryLog(this.store);
         this.store.addChangeListener(this::refreshOnlinePlayers);
+        this.store.addChangeListener(this::enforceOnAllOnline);
         this.store.addOnlineChangeListener(this::refreshOnlinePlayerNames);
         this.store.addUserSavedListener(this::onUserSaved);
         this.store.addTabSettingsListener(this::tickPingScoreboard);
@@ -119,6 +121,8 @@ public final class NextNodesPermissions {
         } catch (IOException ex) {
             throw new IllegalStateException("Unable to load NextNodes permissions database", ex);
         }
+        // Created after load() so the live MongoDB handle is available for index creation.
+        this.banStore = new com.nextnodes.permissions.ban.BanStore(this.store);
 
         NeoForge.EVENT_BUS.register(this);
         NeoForge.EVENT_BUS.register(new PermissionHandlerEvents(this));
@@ -154,6 +158,10 @@ public final class NextNodesPermissions {
 
     public RankHistoryLog rankHistoryLog() {
         return this.rankHistoryLog;
+    }
+
+    public com.nextnodes.permissions.ban.BanStore banStore() {
+        return this.banStore;
     }
 
     public boolean isWebPanelRunning() {
@@ -239,6 +247,25 @@ public final class NextNodesPermissions {
         if (profile == null || profile.getName() == null || profile.getId() == null) {
             return;
         }
+
+        // --- Baneos: capturar IP y bloquear si procede (antes de asignar equipo) ---
+        com.nextnodes.permissions.ban.BanStore bans = this.banStore;
+        if (bans != null) {
+            String ip = extractIp(event.getConnection());
+            long now = System.currentTimeMillis();
+            bans.recordIp(profile.getId().toString(), profile.getName(), ip, now);
+            com.nextnodes.permissions.ban.BanEntry blocking =
+                    bans.findBlockingBan(profile.getId().toString(), ip, now);
+            if (blocking != null) {
+                bans.logBlockedJoin(blocking, profile.getId().toString(), profile.getName(), ip, now);
+                try {
+                    event.getConnection().disconnect(banScreen(blocking));
+                } catch (Exception ignored) {
+                }
+                return; // no continuar con la asignación de equipo
+            }
+        }
+
         CompletableFuture<Void> ready = new CompletableFuture<>();
         try {
             currentServer.execute(() -> {
@@ -562,6 +589,63 @@ public final class NextNodesPermissions {
                 path.equals(root) ? null : this.resolver.resolveBoolean(player.getUUID(), player, "command." + root),
                 this.resolver.resolveBoolean(player.getUUID(), player, "minecraft.command." + root)
         );
+    }
+
+    // ---- Baneos: enforcement -------------------------------------------------
+
+    /** Extracts the dotted-quad IP from a live connection, or null if unavailable. */
+    private static String extractIp(net.minecraft.network.Connection connection) {
+        try {
+            java.net.SocketAddress addr = connection.getRemoteAddress();
+            if (addr instanceof java.net.InetSocketAddress isa && isa.getAddress() != null) {
+                return isa.getAddress().getHostAddress();
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    /** The disconnect screen a banned player sees. */
+    public static net.minecraft.network.chat.Component banScreen(com.nextnodes.permissions.ban.BanEntry ban) {
+        StringBuilder sb = new StringBuilder("§cEstás baneado de este servidor.\n\n");
+        sb.append("§7Razón: §f").append(ban.reason == null || ban.reason.isBlank() ? "N/A" : ban.reason);
+        if (ban.expiresAt == null) {
+            sb.append("\n§7Duración: §fpermanente");
+        } else {
+            sb.append("\n§7Expira: §f").append(
+                    java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+                        .format(java.time.LocalDateTime.ofInstant(
+                            java.time.Instant.ofEpochMilli(ban.expiresAt), java.time.ZoneId.systemDefault())));
+        }
+        return net.minecraft.network.chat.Component.literal(sb.toString());
+    }
+
+    /** Kicks the given online player if an active ban blocks them. Returns true if kicked. */
+    public boolean enforceOnOnlinePlayer(ServerPlayer player) {
+        if (this.banStore == null || player == null || player.connection == null) {
+            return false;
+        }
+        String ip = extractIp(player.connection.getConnection());
+        com.nextnodes.permissions.ban.BanEntry ban =
+                this.banStore.findBlockingBan(player.getUUID().toString(), ip, System.currentTimeMillis());
+        if (ban == null) {
+            return false;
+        }
+        player.connection.disconnect(banScreen(ban));
+        return true;
+    }
+
+    /** Re-checks every online player against active bans (called on ban changes; cross-server via sync). */
+    public void enforceOnAllOnline() {
+        MinecraftServer s = this.server;
+        if (s == null || this.banStore == null) {
+            return;
+        }
+        s.execute(() -> {
+            for (ServerPlayer p : new ArrayList<>(s.getPlayerList().getPlayers())) {
+                enforceOnOnlinePlayer(p);
+            }
+        });
     }
 
 }
