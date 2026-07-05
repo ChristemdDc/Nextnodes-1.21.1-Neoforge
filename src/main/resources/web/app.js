@@ -104,7 +104,7 @@
     function toggleRail() { const app=document.getElementById('app'); app.classList.toggle('collapsed'); localStorage.setItem('nn_collapsed', app.classList.contains('collapsed') ? '1' : '0'); }
     function showTab(next) {
       tab = next;
-      for (const name of ['overview','users','ranks','commands']) {
+      for (const name of ['overview','users','ranks','commands','bans']) {
         document.getElementById(name + 'View').classList.toggle('hidden', name !== tab);
         document.getElementById('tab' + cap(name)).classList.toggle('active', name === tab);
       }
@@ -112,7 +112,8 @@
         overview:['Resumen','Control general, actividad y accesos rápidos.'],
         users:['Jugadores','Gestiona rangos y permisos directos por usuario.'],
         ranks:['Rangos','Crea jerarquías, prefijos, gradientes y reglas.'],
-        commands:['Comandos','Permite o bloquea comandos agrupados por mod.']
+        commands:['Comandos','Permite o bloquea comandos agrupados por mod.'],
+        bans:['Baneos','Cuentas e IPs bloqueadas, altas y registro de actividad.']
       };
       document.getElementById('pageTitle').textContent = titles[tab][0];
       document.getElementById('pageHint').textContent = titles[tab][1];
@@ -125,6 +126,7 @@
       document.getElementById('navRanks').textContent=ranks.length;
       document.getElementById('navCommands').textContent=commands.length;
       renderOverview(users, ranks, commands); renderUsers(users); renderRanks(ranks); renderCommands(commands);
+      if (tab === 'bans') loadBans();
     }
     function renderOverview(users, ranks, commands) {
       const online=users.filter(u=>u.online).length;
@@ -235,6 +237,122 @@
     function commandMatches(c,q) { return !q || (c.name+c.permissionNode+(c.vanillaPermissionNode||'')+(c.paths||[]).join(' ')+commandSource(c)).toLowerCase().includes(q); }
     function groupBy(items, fn) { return items.reduce((out,item)=>{ const key=fn(item); (out[key] ||= []).push(item); return out; }, {}); }
     function toggleCommandGroup(group) { if (!group) return; const key=group.dataset.groupKey || ''; const collapsed=!group.classList.contains('collapsed'); group.classList.toggle('collapsed', collapsed); if (collapsed) collapsedCommandGroups.add(key); else collapsedCommandGroups.delete(key); const button=group.querySelector('.collapseCommand'); if (button) { button.textContent=collapsed?'+':'-'; button.title=collapsed?'Expandir categoría':'Colapsar categoría'; } }
+
+    // =====================================================================
+    // BANEOS
+    // =====================================================================
+    let bansData = { active: [], log: [] };
+    let bansLoading = false;
+    async function loadBans() {
+      if (bansLoading) return;
+      bansLoading = true;
+      try { bansData = await api('/api/bans'); }
+      catch (e) { bansData = { active: [], log: [] }; }
+      finally { bansLoading = false; }
+      const nav = document.getElementById('navBans');
+      if (nav) nav.textContent = (bansData.active || []).length;
+      renderBans();
+    }
+    function banWhoHtml(b) {
+      if (b.type === 'ip') return 'IP ' + escapeHtml(b.ip || '');
+      const name = escapeHtml(b.targetName || '?');
+      return b.ip ? name + ' <span class="muted">(' + escapeHtml(b.ip) + ')</span>' : name;
+    }
+    function banRow(b) {
+      const exp = b.expiresAt ? new Date(b.expiresAt).toLocaleString() : 'Permanente';
+      return `<tr><td>${banWhoHtml(b)}</td>
+        <td><span class="pill">${escapeHtml(b.type === 'ip' ? 'IP' : 'Cuenta')}</span></td>
+        <td>${escapeHtml(b.reason || '')}</td>
+        <td class="muted">${escapeHtml(b.issuer || '')}</td>
+        <td class="muted">${exp}</td>
+        <td class="right"><div class="tableActions"><button class="danger" onclick="unbanId('${escapeAttr(b.id)}')">Quitar</button></div></td></tr>`;
+    }
+    function banLogRow(e) {
+      const when = e.ts ? new Date(e.ts).toLocaleString() : '';
+      return `<tr><td class="muted">${when}</td>
+        <td><span class="pill">${escapeHtml(e.action || '')}</span></td>
+        <td>${escapeHtml(e.targetName || e.target || '')}</td>
+        <td class="muted">${escapeHtml(e.ip || '')}</td>
+        <td>${escapeHtml(e.reason || '')}</td>
+        <td class="muted">${escapeHtml(e.issuer || '')}</td></tr>`;
+    }
+    function renderBans() {
+      const v = document.getElementById('bansView');
+      if (!v) return;
+      const active = bansData.active || [], log = bansData.log || [];
+      const rows = active.map(banRow).join('');
+      const logRows = log.map(banLogRow).join('');
+      v.innerHTML = `
+        <div class="tableCard">
+          <div class="cardHead"><h2>Nuevo baneo</h2><span class="muted">Bloquea una cuenta (+ su última IP conocida) o una IP directa</span></div>
+          <div class="banForm">
+            <select id="banType"><option value="account">Jugador</option><option value="ip">IP</option></select>
+            <input id="banTarget" placeholder="Nombre de jugador o IP" onkeydown="if(event.key==='Enter') submitBan()">
+            <input id="banReason" placeholder="Razón" onkeydown="if(event.key==='Enter') submitBan()">
+            <select id="banDuration">
+              <option value="perm">Permanente</option>
+              <option value="1h">1 hora</option>
+              <option value="1d">1 día</option>
+              <option value="7d">7 días</option>
+              <option value="30d">30 días</option>
+            </select>
+            <button class="primary" onclick="submitBan()">Banear</button>
+          </div>
+        </div>
+        <div class="tableCard">
+          <div class="cardHead"><h2>Baneos activos</h2><span class="muted">${active.length} activos</span></div>
+          <table class="dataTable"><thead><tr><th>Objetivo</th><th>Tipo</th><th>Razón</th><th>Autor</th><th>Expira</th><th></th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="6"><div class="empty">No hay baneos activos.</div></td></tr>'}</tbody></table>
+        </div>
+        <div class="tableCard">
+          <div class="cardHead"><h2>Cuentas por IP (alts)</h2><span class="muted">Detecta cuentas alternativas conectadas desde la misma IP</span></div>
+          <div class="banForm banForm-alts">
+            <input id="altIp" placeholder="IP a consultar" onkeydown="if(event.key==='Enter') altsLookup()">
+            <button onclick="altsLookup()">Buscar</button>
+          </div>
+          <div id="altsResult" class="muted" style="padding:0 20px 18px"></div>
+        </div>
+        <div class="tableCard">
+          <div class="cardHead"><h2>Registro</h2><span class="muted">Últimas ${log.length} entradas</span></div>
+          <table class="dataTable"><thead><tr><th>Fecha</th><th>Acción</th><th>Objetivo</th><th>IP</th><th>Razón</th><th>Autor</th></tr></thead>
+          <tbody>${logRows || '<tr><td colspan="6"><div class="empty">Sin registros todavía.</div></td></tr>'}</tbody></table>
+        </div>`;
+    }
+    async function altsLookup() {
+      const input = document.getElementById('altIp');
+      const ip = (input?.value || '').trim();
+      const result = document.getElementById('altsResult');
+      if (!ip) return;
+      try {
+        const r = await api('/api/alts?ip=' + encodeURIComponent(ip));
+        const accounts = r.accounts || [];
+        if (!accounts.length) { result.textContent = 'Ninguna cuenta conocida desde ' + ip + '.'; return; }
+        const names = accounts.map(a => escapeHtml(a.name || a.uuid || '?')).join(', ');
+        result.textContent = 'Cuentas vistas desde ' + ip + ': ' + names;
+      } catch (e) { result.textContent = 'Error: ' + e.message; }
+    }
+    async function submitBan() {
+      const type = document.getElementById('banType').value;
+      const target = document.getElementById('banTarget').value.trim();
+      const reason = document.getElementById('banReason').value.trim() || 'Sin razón';
+      const duration = document.getElementById('banDuration').value;
+      if (!target) { toast('Indica un jugador o una IP'); return; }
+      const body = type === 'ip' ? { type, ip: target, reason, duration } : { type, name: target, reason, duration };
+      try {
+        await api('/api/bans', { method: 'POST', body });
+        toast('Baneo aplicado');
+        await loadBans();
+      } catch (e) { toast('Error: ' + e.message); }
+    }
+    async function unbanId(id) {
+      if (!confirm('¿Quitar este baneo?')) return;
+      try {
+        await api('/api/bans/' + encodeURIComponent(id), { method: 'DELETE' });
+        toast('Baneo levantado');
+        await loadBans();
+      } catch (e) { toast('Error: ' + e.message); }
+    }
+
     function openModal(kind, data) {
       const isRank=kind==='rank', wrap=document.createElement('div'); wrap.className='modalBackdrop';
       wrap.innerHTML=`<div class="modal"><div class="modalHead"><div class="brandLine"><div class="logoMark"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">${isRank?'<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>':'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>'}</svg></div><div><h2>${isRank?'Editor de rango':'Editor de jugador'}</h2><div class="muted">${isRank?'Configura identidad, prefijo, herencia y comandos.':'Gestiona rangos asignados y permisos directos.'}</div></div></div><button class="icon" data-close>X</button></div><div class="modalBody">${isRank?rankEditor(data):userEditor(data)}</div><div class="modalFoot"><button data-close>Cancelar</button><button class="primary" data-save><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Guardar cambios</button></div></div>`;

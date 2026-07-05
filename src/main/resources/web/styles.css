@@ -264,6 +264,14 @@ input[type=checkbox]:checked::after { content: ''; position: absolute; left: 6px
 .heroActions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 /* =====================================================================
+   BANEOS
+   ===================================================================== */
+.banForm { display: grid; grid-template-columns: 130px 1.4fr 1fr 140px auto; gap: 10px; align-items: center; padding: 16px 20px; }
+.banForm input, .banForm select { height: 42px; }
+.banForm-alts { grid-template-columns: 1fr auto; }
+@media (max-width: 760px) { .banForm { grid-template-columns: 1fr 1fr; } .banForm-alts { grid-template-columns: 1fr auto; } }
+
+/* =====================================================================
    BADGES / CHIPS / AVATARS
    ===================================================================== */
 .avatar { width: 40px; height: 40px; flex: 0 0 40px; border-radius: 11px; image-rendering: pixelated; border: 1px solid var(--line-2); background: var(--inset); }
