@@ -250,6 +250,40 @@ public final class PermissionStore {
         publishEvent("user", user.uuid);
     }
 
+    /** Removes the given ranks (and their expiry) from a user, clearing primaryRank if it was one.
+     *  Used by the rank-expiry sweep. Fires change + sync only if something was actually removed. */
+    public void expireRanks(String uuid, java.util.Collection<String> ranks) throws IOException {
+        boolean changed = false;
+        this.lock.writeLock().lock();
+        try {
+            UserEntry user = this.data.users.get(uuid);
+            if (user == null) {
+                return;
+            }
+            for (String rank : ranks) {
+                if (user.ranks.remove(rank)) changed = true;
+                if (user.rankExpiries != null && user.rankExpiries.remove(rank) != null) changed = true;
+                if (rank.equals(user.primaryRank)) { user.primaryRank = ""; changed = true; }
+            }
+            if (!changed) {
+                return;
+            }
+            user.sanitize();
+            if (user.primaryRank.isBlank()) user.primaryRank = this.data.defaultRank;
+            if (!user.ranks.contains(user.primaryRank)) user.ranks.add(user.primaryRank);
+            col(COL_USERS).replaceOne(Filters.eq("_id", uuid), userToDoc(user), UPSERT);
+            this.cachedSnapshot = null;
+        } catch (Exception ex) {
+            throw new IOException("Unable to expire ranks", ex);
+        } finally {
+            this.lock.writeLock().unlock();
+        }
+        if (changed) {
+            fireChanged();
+            publishEvent("user", uuid);
+        }
+    }
+
     public void deleteUser(String uuid) throws IOException {
         this.lock.writeLock().lock();
         try {
@@ -692,6 +726,7 @@ public final class PermissionStore {
                 .append("ranks",       user.ranks)
                 .append("permissions", perms)
                 .append("meta",        new Document(user.meta))
+                .append("rankExpiries", new Document(user.rankExpiries))
                 .append("lastSeen",    user.lastSeen)
                 .append("online",      user.online);
     }
@@ -710,6 +745,14 @@ public final class PermissionStore {
         if (meta != null) {
             user.meta = new LinkedHashMap<>();
             meta.forEach((k, v) -> user.meta.put(k, v != null ? v.toString() : null));
+        }
+
+        Document rankExpiries = doc.get("rankExpiries", Document.class);
+        if (rankExpiries != null) {
+            user.rankExpiries = new LinkedHashMap<>();
+            rankExpiries.forEach((k, v) -> {
+                if (v instanceof Number n) user.rankExpiries.put(k, n.longValue());
+            });
         }
 
         List<Document> perms = doc.getList("permissions", Document.class, new ArrayList<>());

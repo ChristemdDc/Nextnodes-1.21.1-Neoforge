@@ -36,7 +36,7 @@ public final class RankMongo implements AutoCloseable {
     }
 
     /** Adds a rank to the user's ranks list (creates the user doc if missing). Mirrors /nn rank add. */
-    public void grant(String player, String rawRank) {
+    public void grant(String player, String rawRank, Long expiresAt) {
         String uuid = resolve(player);
         String rank = RankNames.normalize(rawRank);
         if (rank.isEmpty()) throw new IllegalArgumentException("rango vacío");
@@ -44,18 +44,21 @@ public final class RankMongo implements AutoCloseable {
         if (db.getCollection(COL_RANKS).find(Filters.eq("_id", rank)).first() == null) {
             throw new IllegalArgumentException("el rango '" + rank + "' no existe");
         }
+        java.util.List<org.bson.conversions.Bson> updates = new ArrayList<>(java.util.List.of(
+                Updates.addToSet("ranks", rank),
+                Updates.setOnInsert("name", ""),
+                Updates.setOnInsert("tag", ""),
+                Updates.setOnInsert("primaryRank", ""),
+                Updates.setOnInsert("permissions", new ArrayList<Document>()),
+                Updates.setOnInsert("meta", new Document()),
+                Updates.setOnInsert("lastSeen", 0L),
+                Updates.setOnInsert("online", false)));
+        // Con días -> fija la expiración; sin días -> la limpia (rango permanente / renovado).
+        updates.add(expiresAt != null
+                ? Updates.set("rankExpiries." + rank, expiresAt)
+                : Updates.unset("rankExpiries." + rank));
         db.getCollection(COL_USERS).updateOne(
-                Filters.eq("_id", uuid),
-                Updates.combine(
-                        Updates.addToSet("ranks", rank),
-                        Updates.setOnInsert("name", ""),
-                        Updates.setOnInsert("tag", ""),
-                        Updates.setOnInsert("primaryRank", ""),
-                        Updates.setOnInsert("permissions", new ArrayList<Document>()),
-                        Updates.setOnInsert("meta", new Document()),
-                        Updates.setOnInsert("lastSeen", 0L),
-                        Updates.setOnInsert("online", false)),
-                new UpdateOptions().upsert(true));
+                Filters.eq("_id", uuid), Updates.combine(updates), new UpdateOptions().upsert(true));
         publishSync(uuid);
     }
 
@@ -65,7 +68,9 @@ public final class RankMongo implements AutoCloseable {
         String rank = RankNames.normalize(rawRank);
         if (rank.isEmpty()) throw new IllegalArgumentException("rango vacío");
         MongoCollection<Document> users = db.getCollection(COL_USERS);
-        users.updateOne(Filters.eq("_id", uuid), Updates.pull("ranks", rank));
+        users.updateOne(Filters.eq("_id", uuid), Updates.combine(
+                Updates.pull("ranks", rank),
+                Updates.unset("rankExpiries." + rank)));
         users.updateOne(Filters.and(Filters.eq("_id", uuid), Filters.eq("primaryRank", rank)),
                 Updates.set("primaryRank", ""));
         publishSync(uuid);

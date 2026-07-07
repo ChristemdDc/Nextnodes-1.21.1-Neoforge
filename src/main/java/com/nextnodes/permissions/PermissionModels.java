@@ -89,6 +89,7 @@ public final class PermissionModels {
         public List<String> ranks = new ArrayList<>();
         public List<PermissionRule> permissions = new ArrayList<>();
         public Map<String, String> meta = new LinkedHashMap<>();
+        public Map<String, Long> rankExpiries = new LinkedHashMap<>();
         public long lastSeen = 0L;
         public boolean online = false;
 
@@ -113,6 +114,9 @@ public final class PermissionModels {
             this.permissions.forEach(PermissionRule::sanitize);
             if (this.meta == null) {
                 this.meta = new LinkedHashMap<>();
+            }
+            if (this.rankExpiries == null) {
+                this.rankExpiries = new LinkedHashMap<>();
             }
         }
     }

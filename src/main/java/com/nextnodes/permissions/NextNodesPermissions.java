@@ -118,6 +118,7 @@ public final class NextNodesPermissions {
             return t;
         });
         this.pingScheduler.scheduleAtFixedRate(this::tickPingScoreboard, 3, 2, TimeUnit.SECONDS);
+        this.pingScheduler.scheduleAtFixedRate(this::sweepExpiredRanks, 60, 60, TimeUnit.SECONDS);
         try {
             this.store.load();
         } catch (IOException ex) {
@@ -234,6 +235,47 @@ public final class NextNodesPermissions {
         }
         this.store.close();
         this.server = null;
+    }
+
+    /** Every ~minute, removes ranks whose expiry (set via the plugin's [days] arg) has passed — a
+     *  fallback so a timed rank drops even if the store never receives a revoke. Reads the snapshot
+     *  read-only, then mutates through the store (proper locking) off the scheduler thread. */
+    private void sweepExpiredRanks() {
+        if (this.store == null) {
+            return;
+        }
+        com.nextnodes.permissions.PermissionModels.PermissionData data;
+        try {
+            data = this.store.snapshot();
+        } catch (Exception ex) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        for (com.nextnodes.permissions.PermissionModels.UserEntry user : data.users.values()) {
+            java.util.Map<String, Long> expiries = user.rankExpiries;
+            if (expiries == null || expiries.isEmpty()) {
+                continue;
+            }
+            java.util.List<String> expired = new java.util.ArrayList<>();
+            for (java.util.Map.Entry<String, Long> entry : expiries.entrySet()) {
+                if (entry.getValue() != null && entry.getValue() <= now) {
+                    expired.add(entry.getKey());
+                }
+            }
+            if (expired.isEmpty()) {
+                continue;
+            }
+            String uuid = user.uuid;
+            String name = user.name;
+            DB_EXECUTOR.execute(() -> {
+                try {
+                    this.store.expireRanks(uuid, expired);
+                    LOGGER.info("Rango(s) expirado(s) quitado(s) de {}: {}", name, expired);
+                } catch (IOException ex) {
+                    LOGGER.error("No se pudo aplicar expiración de rango de {}", uuid, ex);
+                }
+            });
+        }
     }
 
     /**

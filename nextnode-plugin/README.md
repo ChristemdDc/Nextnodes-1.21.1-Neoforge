@@ -26,15 +26,16 @@ Genera `nextnode-plugin/build/libs/nextnode-plugin-1.0.0.jar` (con el driver de 
 3. Reinicia Velocity.
 
 ## Comandos (ejecutables por consola)
-- `nngrant <jugador> <rango>` — agrega el rango.
-- `nnrevoke <jugador> <rango>` — se lo quita.
+- `nngrant <jugador> <rango> [días]` — agrega el rango. Con `[días]` el rango **expira** tras esos días (el mod lo quita solo, como respaldo por si el `nnrevoke` nunca llega). Sin `[días]` = permanente.
+- `nnrevoke <jugador> <rango>` — se lo quita (y limpia cualquier expiración).
 
 `<jugador>` = el **nombre** si `onlineMode=false`, o el **UUID** si `onlineMode=true`.
 Los jugadores necesitan el permiso `nextnode.plugin` (la consola siempre puede).
 
 ## Configuración en tu tienda / sistema externo
 Servidor **offline** (`onlineMode=false`, lo normal en una network con proxy):
-- Compra: `nngrant {username} vip`
+- Compra permanente: `nngrant {username} vip`
+- Compra por tiempo (con respaldo de expiración): `nngrant {username} vip 30` → expira en 30 días
 - Expiración/reembolso: `nnrevoke {username} vip`
 
 Servidor **premium** (`onlineMode=true`):
@@ -45,7 +46,7 @@ Servidor **premium** (`onlineMode=true`):
 
 ## Cómo funciona
 - Resuelve el jugador a su `_id`: en offline **deriva el UUID del nombre** (`OfflinePlayer:<nombre>`, igual que el servidor); en premium usa el UUID dado.
-- `nngrant`: `updateOne` en `users` con `$addToSet` de `ranks` (crea el doc si no existe, y rechaza rangos inexistentes) + inserta `{origin:"nextnode-plugin", type:"user", key:uuid, ts}` en `sync_events`.
-- El mod NeoForge escucha `sync_events` (cursor tailable en la colección capped) → recarga y aplica.
+- `nngrant`: `updateOne` en `users` con `$addToSet` de `ranks` (crea el doc si no existe, y rechaza rangos inexistentes) + inserta `{origin:"nextnode-plugin", type:"user", key:uuid, ts}` en `sync_events`. Con `[días]` también fija `rankExpiries.<rango>` con la fecha de vencimiento.
+- El mod NeoForge escucha `sync_events` (cursor tailable en la colección capped) → recarga y aplica. Además, cada ~minuto barre los `rankExpiries` vencidos y quita esos rangos solo (el respaldo de expiración).
 
 Requiere que `mongoUri`/`database` coincidan con los del mod, y que la MongoDB sea accesible desde el proxy.
