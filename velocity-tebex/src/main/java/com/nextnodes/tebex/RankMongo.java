@@ -15,6 +15,7 @@ import java.util.ArrayList;
 /** Writes rank changes to the mod's Mongo (users collection) and publishes a sync event. */
 public final class RankMongo implements AutoCloseable {
     private static final String COL_USERS = "users";
+    private static final String COL_RANKS = "ranks";
     private static final String COL_SYNC = "sync_events";
 
     private final MongoClient client;
@@ -31,6 +32,10 @@ public final class RankMongo implements AutoCloseable {
         String uuid = UuidUtil.normalize(rawUuid);
         String rank = RankNames.normalize(rawRank);
         if (rank.isEmpty()) throw new IllegalArgumentException("rango vacío");
+        // Rechaza rangos inexistentes (como /nn rank add), para no meter un rango basura por un typo en Tebex.
+        if (db.getCollection(COL_RANKS).find(Filters.eq("_id", rank)).first() == null) {
+            throw new IllegalArgumentException("el rango '" + rank + "' no existe");
+        }
         db.getCollection(COL_USERS).updateOne(
                 Filters.eq("_id", uuid),
                 Updates.combine(
