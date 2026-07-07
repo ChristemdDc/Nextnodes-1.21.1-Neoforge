@@ -1,4 +1,4 @@
-# NextNodes Tebex (plugin de Velocity)
+# NextNode Plugin (Velocity, para Tebex)
 
 Otorga/quita rangos escribiendo en la **misma MongoDB** del mod NextNodes + un evento de sync.
 El servidor NeoForge aplica el cambio automáticamente (incluso con el jugador desconectado).
@@ -11,11 +11,11 @@ Desde la raíz del repo:
 ```
 ./gradlew -p velocity-tebex build
 ```
-Genera `velocity-tebex/build/libs/nextnodes-tebex-1.0.0.jar` (con el driver de Mongo incluido).
+Genera `velocity-tebex/build/libs/nextnode-plugin-1.0.0.jar` (con el driver de Mongo incluido).
 
 ## Instalar
 1. Copia el jar a la carpeta `plugins/` de **Velocity** y arranca Velocity una vez (crea la config).
-2. Edita `plugins/nextnodes-tebex/config.properties` con el **MISMO** `mongoUri` y `database` que usa el mod:
+2. Edita `plugins/nextnode-plugin/config.properties` con el **MISMO** `mongoUri` y `database` que usa el mod:
    ```properties
    mongoUri=mongodb://TU_HOST:27017
    database=nextnodes_permissions

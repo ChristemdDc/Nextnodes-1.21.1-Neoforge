@@ -12,7 +12,7 @@ import org.slf4j.Logger;
 
 import java.nio.file.Path;
 
-@Plugin(id = "nextnodes-tebex", name = "NextNodes Tebex", version = "1.0.0", authors = {"NextNodes"})
+@Plugin(id = "nextnode-plugin", name = "NextNode Plugin", version = "1.0.0", authors = {"NextNodes"})
 public final class NextNodesTebexPlugin {
     private final ProxyServer server;
     private final Logger logger;
