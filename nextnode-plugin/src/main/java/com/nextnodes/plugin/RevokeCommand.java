@@ -1,4 +1,4 @@
-package com.nextnodes.tebex;
+package com.nextnodes.plugin;
 
 import com.velocitypowered.api.command.SimpleCommand;
 import net.kyori.adventure.text.Component;
@@ -32,6 +32,6 @@ public final class RevokeCommand implements SimpleCommand {
 
     @Override
     public boolean hasPermission(Invocation invocation) {
-        return invocation.source().hasPermission("nextnodes.tebex");
+        return invocation.source().hasPermission("nextnode.plugin");
     }
 }

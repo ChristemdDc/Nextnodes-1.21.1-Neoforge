@@ -1,10 +1,10 @@
-package com.nextnodes.tebex;
+package com.nextnodes.plugin;
 
 import org.bson.Document;
 
 /** Builds the sync_events document the mod's tailable listener reacts to. */
 public final class SyncEvents {
-    public static final String ORIGIN = "velocity-tebex";
+    public static final String ORIGIN = "nextnode-plugin";
     private SyncEvents() {}
 
     public static Document userEvent(String uuid, long ts) {

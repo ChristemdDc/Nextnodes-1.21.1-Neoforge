@@ -1,4 +1,4 @@
-package com.nextnodes.tebex;
+package com.nextnodes.plugin;
 
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
@@ -32,7 +32,7 @@ public final class RankMongo implements AutoCloseable {
         String uuid = UuidUtil.normalize(rawUuid);
         String rank = RankNames.normalize(rawRank);
         if (rank.isEmpty()) throw new IllegalArgumentException("rango vacío");
-        // Rechaza rangos inexistentes (como /nn rank add), para no meter un rango basura por un typo en Tebex.
+        // Rechaza rangos inexistentes (como /nn rank add), para no meter un rango basura por un typo.
         if (db.getCollection(COL_RANKS).find(Filters.eq("_id", rank)).first() == null) {
             throw new IllegalArgumentException("el rango '" + rank + "' no existe");
         }

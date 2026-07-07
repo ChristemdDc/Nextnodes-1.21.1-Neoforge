@@ -1,4 +1,4 @@
-package com.nextnodes.tebex;
+package com.nextnodes.plugin;
 
 import org.slf4j.Logger;
 
@@ -32,7 +32,7 @@ public final class PluginConfig {
                 props.setProperty("mongoUri", uri);
                 props.setProperty("database", db);
                 try (var out = Files.newOutputStream(file)) {
-                    props.store(out, "NextNodes Tebex — usa el MISMO mongoUri/database que el mod");
+                    props.store(out, "NextNode Plugin — usa el MISMO mongoUri/database que el mod");
                 }
                 logger.info("Config creada en {} — ajústala al Mongo del mod y reinicia Velocity.", file);
             }

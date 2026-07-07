@@ -1,4 +1,4 @@
-package com.nextnodes.tebex;
+package com.nextnodes.plugin;
 
 import com.google.inject.Inject;
 import com.velocitypowered.api.command.CommandManager;
@@ -13,14 +13,14 @@ import org.slf4j.Logger;
 import java.nio.file.Path;
 
 @Plugin(id = "nextnode-plugin", name = "NextNode Plugin", version = "1.0.0", authors = {"NextNodes"})
-public final class NextNodesTebexPlugin {
+public final class NextNodePlugin {
     private final ProxyServer server;
     private final Logger logger;
     private final Path dataDir;
     private RankMongo mongo;
 
     @Inject
-    public NextNodesTebexPlugin(ProxyServer server, Logger logger, @DataDirectory Path dataDir) {
+    public NextNodePlugin(ProxyServer server, Logger logger, @DataDirectory Path dataDir) {
         this.server = server;
         this.logger = logger;
         this.dataDir = dataDir;
@@ -39,7 +39,7 @@ public final class NextNodesTebexPlugin {
         CommandManager cm = server.getCommandManager();
         cm.register(cm.metaBuilder("nngrant").plugin(this).build(), new GrantCommand(mongo, logger));
         cm.register(cm.metaBuilder("nnrevoke").plugin(this).build(), new RevokeCommand(mongo, logger));
-        logger.info("NextNodes Tebex listo (base '{}').", config.database);
+        logger.info("NextNode Plugin listo (base '{}').", config.database);
     }
 
     @Subscribe

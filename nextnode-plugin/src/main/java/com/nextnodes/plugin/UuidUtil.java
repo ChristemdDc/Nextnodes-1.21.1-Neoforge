@@ -1,4 +1,4 @@
-package com.nextnodes.tebex;
+package com.nextnodes.plugin;
 
 import java.util.UUID;
 
