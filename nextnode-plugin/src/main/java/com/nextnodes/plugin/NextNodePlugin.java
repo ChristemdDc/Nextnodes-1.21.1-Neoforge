@@ -30,7 +30,7 @@ public final class NextNodePlugin {
     public void onInit(ProxyInitializeEvent event) {
         PluginConfig config = PluginConfig.loadOrCreate(dataDir, logger);
         try {
-            this.mongo = new RankMongo(config.mongoUri, config.database);
+            this.mongo = new RankMongo(config.mongoUri, config.database, config.onlineMode);
         } catch (Exception ex) {
             logger.error("No se pudo conectar a MongoDB ({}). Los comandos fallarán hasta corregir la config.",
                     ex.getMessage());

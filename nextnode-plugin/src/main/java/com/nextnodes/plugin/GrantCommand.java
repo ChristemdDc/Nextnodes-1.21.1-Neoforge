@@ -17,7 +17,7 @@ public final class GrantCommand implements SimpleCommand {
     public void execute(Invocation invocation) {
         String[] args = invocation.arguments();
         if (args.length < 2) {
-            invocation.source().sendMessage(Component.text("Uso: /nngrant <uuid> <rango>"));
+            invocation.source().sendMessage(Component.text("Uso: /nngrant <jugador> <rango>"));
             return;
         }
         try {

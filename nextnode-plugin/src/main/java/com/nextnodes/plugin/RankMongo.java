@@ -20,16 +20,24 @@ public final class RankMongo implements AutoCloseable {
 
     private final MongoClient client;
     private final MongoDatabase db;
+    private final boolean onlineMode;
 
-    public RankMongo(String uri, String database) {
+    public RankMongo(String uri, String database, boolean onlineMode) {
         this.client = MongoClients.create(uri);
         this.db = client.getDatabase(database);
+        this.onlineMode = onlineMode;
         ensureSyncCollection();
     }
 
+    /** Resolves the player identifier to the mod's {@code _id}: derives the offline UUID from the
+     *  name (offline server) or uses the given premium UUID as-is (onlineMode). */
+    private String resolve(String player) {
+        return onlineMode ? UuidUtil.normalize(player) : OfflineUuid.of(player);
+    }
+
     /** Adds a rank to the user's ranks list (creates the user doc if missing). Mirrors /nn rank add. */
-    public void grant(String rawUuid, String rawRank) {
-        String uuid = UuidUtil.normalize(rawUuid);
+    public void grant(String player, String rawRank) {
+        String uuid = resolve(player);
         String rank = RankNames.normalize(rawRank);
         if (rank.isEmpty()) throw new IllegalArgumentException("rango vacío");
         // Rechaza rangos inexistentes (como /nn rank add), para no meter un rango basura por un typo.
@@ -52,8 +60,8 @@ public final class RankMongo implements AutoCloseable {
     }
 
     /** Removes a rank from the user's ranks list (and clears primaryRank if it was that). Mirrors /nn rank remove. */
-    public void revoke(String rawUuid, String rawRank) {
-        String uuid = UuidUtil.normalize(rawUuid);
+    public void revoke(String player, String rawRank) {
+        String uuid = resolve(player);
         String rank = RankNames.normalize(rawRank);
         if (rank.isEmpty()) throw new IllegalArgumentException("rango vacío");
         MongoCollection<Document> users = db.getCollection(COL_USERS);

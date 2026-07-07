@@ -17,7 +17,7 @@ public final class RevokeCommand implements SimpleCommand {
     public void execute(Invocation invocation) {
         String[] args = invocation.arguments();
         if (args.length < 2) {
-            invocation.source().sendMessage(Component.text("Uso: /nnrevoke <uuid> <rango>"));
+            invocation.source().sendMessage(Component.text("Uso: /nnrevoke <jugador> <rango>"));
             return;
         }
         try {
