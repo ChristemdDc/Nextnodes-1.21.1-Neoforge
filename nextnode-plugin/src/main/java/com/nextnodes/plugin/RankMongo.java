@@ -29,9 +29,20 @@ public final class RankMongo implements AutoCloseable {
         ensureSyncCollection();
     }
 
-    /** Resolves the player identifier to the mod's {@code _id}: derives the offline UUID from the
-     *  name (offline server) or uses the given premium UUID as-is (onlineMode). */
+    /** Resolves the player identifier to the mod's {@code _id}. Prefers the real _id of an existing
+     *  user doc matched by name (case-insensitive) so a capitalization mismatch never creates an
+     *  orphan document; falls back to deriving the offline UUID from the name (offline server) or
+     *  using the given premium UUID as-is (onlineMode) when the player has no doc yet. */
     private String resolve(String player) {
+        Document existing = db.getCollection(COL_USERS)
+                .find(Filters.regex("name", "^" + java.util.regex.Pattern.quote(player.trim()) + "$", "i"))
+                .first();
+        if (existing != null) {
+            Object id = existing.get("_id");
+            if (id instanceof String s && !s.isBlank()) {
+                return s;
+            }
+        }
         return onlineMode ? UuidUtil.normalize(player) : OfflineUuid.of(player);
     }
 
