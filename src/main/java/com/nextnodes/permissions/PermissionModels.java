@@ -15,6 +15,7 @@ public final class PermissionModels {
         public Map<String, Rank> ranks = new LinkedHashMap<>();
         public Map<String, UserEntry> users = new LinkedHashMap<>();
         public TabSettings tabSettings = new TabSettings();
+        public LimitSettings limitSettings = new LimitSettings();
 
         public void ensureDefaults() {
             if (this.ranks == null) {
@@ -29,6 +30,10 @@ public final class PermissionModels {
             if (this.tabSettings == null) {
                 this.tabSettings = new TabSettings();
             }
+            if (this.limitSettings == null) {
+                this.limitSettings = new LimitSettings();
+            }
+            this.limitSettings.sanitize();
             this.defaultRank = normalizeName(this.defaultRank);
             this.ranks.computeIfAbsent(this.defaultRank, key -> {
                 Rank rank = new Rank();
@@ -46,6 +51,23 @@ public final class PermissionModels {
         public boolean showPing = true;
     }
 
+    public static final class LimitSettings {
+        public boolean enabled = false;
+        public int max = 20;
+        public String kickMessage =
+                "El servidor está lleno ({online}/{max}). Los rangos con acceso preferente entran igual.";
+
+        public void sanitize() {
+            if (this.max <= 0) {
+                this.max = 20;
+            }
+            if (this.kickMessage == null || this.kickMessage.isBlank()) {
+                this.kickMessage =
+                        "El servidor está lleno ({online}/{max}). Los rangos con acceso preferente entran igual.";
+            }
+        }
+    }
+
     public static final class Rank {
         public String name = "";
         public String displayName = "";
@@ -55,6 +77,7 @@ public final class PermissionModels {
         public List<String> parents = new ArrayList<>();
         public List<PermissionRule> permissions = new ArrayList<>();
         public Map<String, String> meta = new LinkedHashMap<>();
+        public boolean bypassPlayerLimit = false;
 
         public void sanitize() {
             this.name = normalizeName(this.name);
