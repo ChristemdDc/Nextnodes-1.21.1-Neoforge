@@ -39,6 +39,8 @@ public final class NextNodePlugin {
         CommandManager cm = server.getCommandManager();
         cm.register(cm.metaBuilder("nngrant").plugin(this).build(), new GrantCommand(mongo, logger));
         cm.register(cm.metaBuilder("nnrevoke").plugin(this).build(), new RevokeCommand(mongo, logger));
+        PlayerLimitMongo limitMongo = new PlayerLimitMongo(mongo.database());
+        server.getEventManager().register(this, new PlayerLimitListener(server, limitMongo, logger));
         logger.info("NextNode Plugin listo (base '{}').", config.database);
     }
 

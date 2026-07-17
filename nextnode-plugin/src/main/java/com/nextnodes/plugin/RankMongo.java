@@ -107,6 +107,11 @@ public final class RankMongo implements AutoCloseable {
         }
     }
 
+    /** Expone la base compartida para que otros lectores (p. ej. PlayerLimitMongo) reusen esta conexión. */
+    MongoDatabase database() {
+        return db;
+    }
+
     @Override
     public void close() {
         try { client.close(); } catch (Exception ignored) {}
