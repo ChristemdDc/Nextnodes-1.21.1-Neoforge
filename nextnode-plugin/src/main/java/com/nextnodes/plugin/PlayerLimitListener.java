@@ -35,12 +35,13 @@ public final class PlayerLimitListener {
             String joinerUuid = joiner.getUniqueId().toString();
             Set<String> bypassRanks = limitMongo.bypassRankNames();
             boolean joinerHasBypass = limitMongo.hasBypassRank(joinerUuid, bypassRanks);
+            if (joinerHasBypass) return;
 
             List<String> onlineUuids = server.getAllPlayers().stream()
                     .map(Player::getUniqueId).map(UUID::toString).collect(Collectors.toList());
             long nonBypassOnline = limitMongo.countOnlineWithoutBypass(onlineUuids, bypassRanks);
 
-            if (!PlayerLimitDecision.shouldAllow(true, joinerHasBypass, nonBypassOnline, settings.max)) {
+            if (!PlayerLimitDecision.shouldAllow(true, false, nonBypassOnline, settings.max)) {
                 String message = settings.kickMessage
                         .replace("{online}", String.valueOf(nonBypassOnline))
                         .replace("{max}", String.valueOf(settings.max));
@@ -49,7 +50,7 @@ public final class PlayerLimitListener {
             }
         } catch (Exception ex) {
             // Fail-open: un problema con Mongo no debe bloquear el acceso al servidor.
-            logger.warn("No se pudo evaluar el límite de jugadores, se permite el acceso: {}", ex.getMessage());
+            logger.warn("No se pudo evaluar el límite de jugadores, se permite el acceso: {}", ex.toString(), ex);
         }
     }
 }
