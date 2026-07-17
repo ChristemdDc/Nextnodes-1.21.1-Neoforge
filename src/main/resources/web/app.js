@@ -71,7 +71,8 @@
         ranks: { admin: { name:'admin', displayName:'Admin', prefix:'&c[Admin] ', weight:100, parents:[], permissions:[{node:'command.gamemode',value:true,mode:'literal',contexts:{}},{node:'command.tp',value:true,mode:'literal',contexts:{}}], meta:{gradientStart:'#ff3d8b',gradientMiddle:'#7c4dff',gradientEnd:'#00e5ff'} }, vip: { name:'vip', displayName:'VIP', prefix:'&a[VIP] ', weight:50, parents:['default'], permissions:[{node:'command.fly',value:true,mode:'literal',contexts:{}}], meta:{gradientStart:'#00e676',gradientMiddle:'#00e5ff',gradientEnd:'#7c4dff'} }, default: { name:'default', displayName:'Jugador', prefix:'&7[Jugador] ', weight:0, parents:[], permissions:[], meta:{} } },
         commands: [ {name:'gamemode',permissionNode:'command.gamemode',source:'Minecraft Vanilla',paths:['gamemode survival','gamemode creative']}, {name:'tp',permissionNode:'command.tp',source:'Minecraft Vanilla',paths:['tp','teleport']}, {name:'fly',permissionNode:'command.fly',source:'Essentials',paths:['fly']}, {name:'heal',permissionNode:'command.heal',source:'Essentials',paths:['heal']}, {name:'give',permissionNode:'command.give',source:'Minecraft Vanilla',paths:['give']}, {name:'kick',permissionNode:'command.kick',source:'Minecraft Vanilla',paths:['kick']}, {name:'ban',permissionNode:'command.ban',source:'Minecraft Vanilla',paths:['ban']}, {name:'home',permissionNode:'command.home',source:'Essentials',paths:['home','sethome']} ],
         defaultRank: 'default',
-        tabSettings: { showPing: true }
+        tabSettings: { showPing: true },
+        limitSettings: { enabled: false, max: 20, kickMessage: 'El servidor está lleno ({online}/{max}). Los rangos con acceso preferente entran igual.' }
       };
       render(); setStatus('Demo (sin servidor)');
     }
@@ -151,6 +152,12 @@
             <div class="cardTitle"><h2>Lista TAB</h2></div>
             <div class="tabRow"><span class="tileIcon">${I_tab}</span><div style="flex:1;min-width:0"><div class="t-name">Mostrar ping</div><div class="t-sub">Ping como texto de color junto al nombre en el TAB del juego</div></div><label class="miniCheck" style="margin:0"><input type="checkbox" id="tabShowPing" ${(state.tabSettings||{}).showPing !== false ? 'checked' : ''} onchange="saveTabSettings()"></label></div>
           </div>
+          <div class="tabCard">
+            <div class="cardTitle"><h2>Límite de jugadores</h2></div>
+            <div class="tabRow"><span class="tileIcon">${I_bolt}</span><div style="flex:1;min-width:0"><div class="t-name">Activar límite</div><div class="t-sub">Los rangos marcados "bypass" no cuentan contra el máximo</div></div><label class="miniCheck" style="margin:0"><input type="checkbox" id="limitEnabled" ${(state.limitSettings||{}).enabled ? 'checked' : ''} onchange="saveLimitSettings()"></label></div>
+            <div class="editorFields cols-2" style="padding:0 20px 16px"><label>Máximo de jugadores<input id="limitMax" type="number" min="1" value="${escapeAttr((state.limitSettings||{}).max ?? 20)}" onchange="saveLimitSettings()"></label></div>
+            <div class="sectionBody"><label>Mensaje al rechazar (usa {online} y {max})<textarea id="limitKickMessage" onchange="saveLimitSettings()">${escapeHtml((state.limitSettings||{}).kickMessage || 'El servidor está lleno ({online}/{max}). Los rangos con acceso preferente entran igual.')}</textarea></label></div>
+          </div>
           <div class="tableCard">
             <div class="cardHead"><h2>Rangos del servidor</h2><button class="primary" onclick="newRank()">+ Nuevo rango</button></div>
             <table class="dataTable"><thead><tr><th>Rango</th><th>Peso</th><th>Prefijo</th><th>Reglas</th><th></th></tr></thead><tbody>${sortedRanks.map(rankTableRow).join('') || '<tr><td colspan="5"><div class="empty">No hay rangos definidos.</div></td></tr>'}</tbody></table>
@@ -162,6 +169,15 @@
       try {
         await api('/api/settings/tab', { method: 'PUT', body: { showPing } });
         toast('Configuración del TAB guardada');
+      } catch(e) { toast('Error: ' + e.message); }
+    }
+    async function saveLimitSettings() {
+      const enabled = document.getElementById('limitEnabled')?.checked ?? false;
+      const max = Number(document.getElementById('limitMax')?.value || 20);
+      const kickMessage = document.getElementById('limitKickMessage')?.value || '';
+      try {
+        await api('/api/settings/limit', { method: 'PUT', body: { enabled, max, kickMessage } });
+        toast('Límite de jugadores guardado');
       } catch(e) { toast('Error: ' + e.message); }
     }
     function renderUsers(users) {
@@ -370,6 +386,7 @@
           <div class="sectionBody"><div class="prefixLive"><span class="prefixLabel">Vista previa</span><span class="prefixPreview" id="prefixPreview2"></span></div><label>Texto con códigos de color (&amp; o hex &amp;#RRGGBB)<input id="rank_prefix" value="${escapeAttr(r.prefix||'')}" oninput="syncPrefixPreview()"></label>
             <label>Sufijo (después del nombre)<input id="rank_suffix" value="${escapeAttr(r.suffix||'')}" oninput="syncSuffixPreview()"></label>
             <div class="prefixLive"><span class="prefixLabel">Sufijo</span><span class="prefixPreview" id="suffixPreview"></span></div>
+            <div class="row"><label class="miniCheck"><input id="rank_bypass_limit" type="checkbox" ${r.bypassPlayerLimit ? 'checked' : ''}>Sin límite de jugadores (bypass)</label></div>
             <div class="gradientRow"><label>Inicio<input id="rank_grad_a" type="color" value="${escapeAttr(gs)}"></label><label>Medio<input id="rank_grad_m" type="color" value="${escapeAttr(gm)}"></label><label>Final<input id="rank_grad_b" type="color" value="${escapeAttr(ge)}"></label><label>Texto del gradiente<input id="rank_grad_text" value="${escapeAttr(r.displayName ? '[' + r.displayName + '] ' : '[' + r.name + '] ')}"></label><button class="primary" onclick="applyGradientPrefix()">Aplicar gradiente</button></div>
             <div class="row"><label class="miniCheck"><input id="rank_grad_l" type="checkbox">Negrita</label><label class="miniCheck"><input id="rank_grad_o" type="checkbox">Itálica</label><label class="miniCheck"><input id="rank_grad_n" type="checkbox">Subrayado</label><label class="miniCheck"><input id="rank_grad_mf" type="checkbox">Tachado</label></div>
             <div class="formatRow">${colors.map(c=>`<button class="swatch" style="background:${c[2]}" title="${c[1]}" onclick="insertPrefix('&${c[0]}')"></button>`).join('')}${formats.map(f=>`<button class="icon" title="${f[1]}" onclick="insertPrefix('&${f[0]}')">${f[1]}</button>`).join('')}</div></div></div>
@@ -419,7 +436,7 @@
     function syncSuffixPreview(){const el=document.getElementById('suffixPreview'); if(el)el.innerHTML=prefixHtml(document.getElementById('rank_suffix')?.value||'');}
     function ruleHtml(rule={node:'',value:true,mode:'literal',contexts:{}}){return `<div class="rule" data-rule><input data-node value="${escapeAttr(rule.node||'')}" placeholder="permiso.mod o mod.*"><select data-value><option value="true" ${rule.value?'selected':''}>Permitir</option><option value="false" ${!rule.value?'selected':''}>Bloquear</option></select><select data-mode><option ${rule.mode==='literal'?'selected':''}>literal</option><option ${rule.mode==='wildcard'?'selected':''}>wildcard</option><option ${rule.mode==='regex'?'selected':''}>regex</option></select><button class="icon bad" onclick="this.closest('[data-rule]').remove()">X</button></div>`;}
     function addRule(prefix){document.getElementById(prefix+'_rules').insertAdjacentHTML('beforeend', ruleHtml());}
-    function readRankEditor(){const id=document.getElementById('rank_id').value.trim().toLowerCase(); const meta=readJsonBox('rank_meta'); meta.gradientStart=document.getElementById('rank_grad_a')?.value || meta.gradientStart; meta.gradientMiddle=document.getElementById('rank_grad_m')?.value || meta.gradientMiddle; meta.gradientEnd=document.getElementById('rank_grad_b')?.value || meta.gradientEnd; return {name:id, displayName:document.getElementById('rank_name').value, prefix:document.getElementById('rank_prefix').value, suffix:document.getElementById('rank_suffix').value, weight:Number(document.getElementById('rank_weight').value||0), parents:splitList(document.getElementById('rank_parents').value), permissions:[...modalCommandRules(), ...readRules('rank')], meta};}
+    function readRankEditor(){const id=document.getElementById('rank_id').value.trim().toLowerCase(); const meta=readJsonBox('rank_meta'); meta.gradientStart=document.getElementById('rank_grad_a')?.value || meta.gradientStart; meta.gradientMiddle=document.getElementById('rank_grad_m')?.value || meta.gradientMiddle; meta.gradientEnd=document.getElementById('rank_grad_b')?.value || meta.gradientEnd; return {name:id, displayName:document.getElementById('rank_name').value, prefix:document.getElementById('rank_prefix').value, suffix:document.getElementById('rank_suffix').value, weight:Number(document.getElementById('rank_weight').value||0), parents:splitList(document.getElementById('rank_parents').value), permissions:[...modalCommandRules(), ...readRules('rank')], meta, bypassPlayerLimit:document.getElementById('rank_bypass_limit').checked};}
     function readUserEditor(original){return {uuid:document.getElementById('user_uuid').value, name:document.getElementById('user_name').value, tag:document.getElementById('user_tag').value, primaryRank:document.getElementById('user_primary').value, ranks:splitList(document.getElementById('user_ranks').value), permissions:[...userModalCommandRules(), ...readRules('user')], meta:readJsonBox('user_meta'), lastSeen:original.lastSeen||Date.now(), online:!!original.online};}
     function readRules(prefix){return [...document.querySelectorAll(`#${prefix}_rules [data-rule]`)].map(row=>({node:row.querySelector('[data-node]').value.trim().toLowerCase(), value:row.querySelector('[data-value]').value==='true', mode:row.querySelector('[data-mode]').value, contexts:{}})).filter(r=>r.node);}
     function readJsonBox(id){try{return JSON.parse(document.getElementById(id).value||'{}')}catch{toast('Meta JSON inválido'); throw new Error('Meta JSON inválido')}}
