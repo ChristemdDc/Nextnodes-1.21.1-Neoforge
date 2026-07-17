@@ -105,7 +105,7 @@
     function toggleRail() { const app=document.getElementById('app'); app.classList.toggle('collapsed'); localStorage.setItem('nn_collapsed', app.classList.contains('collapsed') ? '1' : '0'); }
     function showTab(next) {
       tab = next;
-      for (const name of ['overview','users','ranks','commands','bans']) {
+      for (const name of ['overview','users','ranks','commands','bans','settings']) {
         document.getElementById(name + 'View').classList.toggle('hidden', name !== tab);
         document.getElementById('tab' + cap(name)).classList.toggle('active', name === tab);
       }
@@ -114,7 +114,8 @@
         users:['Jugadores','Gestiona rangos y permisos directos por usuario.'],
         ranks:['Rangos','Crea jerarquías, prefijos, gradientes y reglas.'],
         commands:['Comandos','Permite o bloquea comandos agrupados por mod.'],
-        bans:['Baneos','Cuentas e IPs bloqueadas, altas y registro de actividad.']
+        bans:['Baneos','Cuentas e IPs bloqueadas, altas y registro de actividad.'],
+        settings:['Ajustes','Límite de jugadores, rangos con bypass y lista TAB.']
       };
       document.getElementById('pageTitle').textContent = titles[tab][0];
       document.getElementById('pageHint').textContent = titles[tab][1];
@@ -126,7 +127,7 @@
       document.getElementById('navUsers').textContent=users.length;
       document.getElementById('navRanks').textContent=ranks.length;
       document.getElementById('navCommands').textContent=commands.length;
-      renderOverview(users, ranks, commands); renderUsers(users); renderRanks(ranks); renderCommands(commands);
+      renderOverview(users, ranks, commands); renderUsers(users); renderRanks(ranks); renderCommands(commands); renderSettings(ranks);
       if (tab === 'bans') loadBans();
     }
     function renderOverview(users, ranks, commands) {
@@ -148,16 +149,6 @@
               ${tile('Gestionar rangos','Editar jerarquías',"showTab('ranks')",'#4d7cfe', I_layers)}
             </div>
           </div>
-          <div class="tabCard">
-            <div class="cardTitle"><h2>Lista TAB</h2></div>
-            <div class="tabRow"><span class="tileIcon">${I_tab}</span><div style="flex:1;min-width:0"><div class="t-name">Mostrar ping</div><div class="t-sub">Ping como texto de color junto al nombre en el TAB del juego</div></div><label class="miniCheck" style="margin:0"><input type="checkbox" id="tabShowPing" ${(state.tabSettings||{}).showPing !== false ? 'checked' : ''} onchange="saveTabSettings()"></label></div>
-          </div>
-          <div class="tabCard">
-            <div class="cardTitle"><h2>Límite de jugadores</h2></div>
-            <div class="tabRow"><span class="tileIcon">${I_bolt}</span><div style="flex:1;min-width:0"><div class="t-name">Activar límite</div><div class="t-sub">Los rangos marcados "bypass" no cuentan contra el máximo</div></div><label class="miniCheck" style="margin:0"><input type="checkbox" id="limitEnabled" ${(state.limitSettings||{}).enabled ? 'checked' : ''} onchange="saveLimitSettings()"></label></div>
-            <div class="editorFields cols-2" style="padding:0 20px 16px"><label>Máximo de jugadores<input id="limitMax" type="number" min="1" value="${escapeAttr((state.limitSettings||{}).max ?? 20)}" onchange="saveLimitSettings()"></label></div>
-            <div class="sectionBody"><label>Mensaje al rechazar (usa {online} y {max})<textarea id="limitKickMessage" onchange="saveLimitSettings()">${escapeHtml((state.limitSettings||{}).kickMessage || 'El servidor está lleno ({online}/{max}). Los rangos con acceso preferente entran igual.')}</textarea></label></div>
-          </div>
           <div class="tableCard">
             <div class="cardHead"><h2>Rangos del servidor</h2><button class="primary" onclick="newRank()">+ Nuevo rango</button></div>
             <table class="dataTable"><thead><tr><th>Rango</th><th>Peso</th><th>Prefijo</th><th>Reglas</th><th></th></tr></thead><tbody>${sortedRanks.map(rankTableRow).join('') || '<tr><td colspan="5"><div class="empty">No hay rangos definidos.</div></td></tr>'}</tbody></table>
@@ -178,6 +169,40 @@
       try {
         await api('/api/settings/limit', { method: 'PUT', body: { enabled, max, kickMessage } });
         toast('Límite de jugadores guardado');
+      } catch(e) { toast('Error: ' + e.message); }
+    }
+    function bypassRankRow(r) {
+      return `<div class="tabRow"><span class="tileIcon">${I_star}</span><div style="flex:1;min-width:0"><div class="t-name">${escapeHtml(r.displayName||r.name)}</div><div class="t-sub">${escapeHtml(r.name)} · peso ${r.weight||0}</div></div><label class="miniCheck" style="margin:0"><input type="checkbox" ${r.bypassPlayerLimit?'checked':''} onchange="toggleRankBypass('${escapeAttr(r.name)}',this.checked)"></label></div>`;
+    }
+    function renderSettings(ranks) {
+      const limit=state.limitSettings||{};
+      const byWeight=[...ranks].sort((a,b)=>(b.weight||0)-(a.weight||0));
+      document.getElementById('settingsView').innerHTML = `
+        <div class="panel">
+          <div class="panelHead"><div><h2>Límite de jugadores</h2><div class="muted">Se aplica en el proxy. El max-players real debe estar por encima de este número.</div></div></div>
+          <div class="sectionBody">
+            <div class="tabRow"><span class="tileIcon">${I_bolt}</span><div style="flex:1;min-width:0"><div class="t-name">Activar límite</div><div class="t-sub">Los rangos marcados abajo no cuentan contra el máximo</div></div><label class="miniCheck" style="margin:0"><input type="checkbox" id="limitEnabled" ${limit.enabled?'checked':''} onchange="saveLimitSettings()"></label></div>
+            <div class="editorFields cols-2"><label>Máximo de jugadores<input id="limitMax" type="number" min="1" value="${escapeAttr(limit.max ?? 20)}" onchange="saveLimitSettings()"></label></div>
+            <label>Mensaje al rechazar (usa {online} y {max})<textarea id="limitKickMessage" onchange="saveLimitSettings()">${escapeHtml(limit.kickMessage || 'El servidor está lleno ({online}/{max}). Los rangos con acceso preferente entran igual.')}</textarea></label>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panelHead"><div><h2>Rangos sin límite (bypass)</h2><div class="muted">Entran aunque esté lleno y no ocupan cupo. Cada rango nuevo empieza sin bypass.</div></div></div>
+          <div class="sectionBody">${byWeight.map(bypassRankRow).join('') || '<div class="empty">No hay rangos definidos.</div>'}</div>
+        </div>
+        <div class="panel">
+          <div class="panelHead"><div><h2>Lista TAB</h2><div class="muted">Cómo se ve la lista de jugadores dentro del juego.</div></div></div>
+          <div class="sectionBody">
+            <div class="tabRow"><span class="tileIcon">${I_tab}</span><div style="flex:1;min-width:0"><div class="t-name">Mostrar ping</div><div class="t-sub">Ping como texto de color junto al nombre en el TAB del juego</div></div><label class="miniCheck" style="margin:0"><input type="checkbox" id="tabShowPing" ${(state.tabSettings||{}).showPing !== false ? 'checked' : ''} onchange="saveTabSettings()"></label></div>
+          </div>
+        </div>`;
+    }
+    async function toggleRankBypass(name, checked) {
+      // PUT reemplaza el rango entero: hay que enviar el objeto completo, no solo el flag.
+      const rank=clone(state.ranks[name]); rank.bypassPlayerLimit=checked;
+      try {
+        await api('/api/ranks/'+encodeURIComponent(name), { method: 'PUT', body: rank });
+        toast(checked ? 'Rango exento del límite' : 'Rango sujeto al límite');
       } catch(e) { toast('Error: ' + e.message); }
     }
     function renderUsers(users) {
