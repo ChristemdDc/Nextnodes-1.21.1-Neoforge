@@ -40,6 +40,7 @@ public final class PermissionStore {
     private static final String KEY_SCHEMA_VERSION = "schemaVersion";
     private static final String KEY_API_KEY        = "apiKey";
     private static final String KEY_TAB_SETTINGS   = "tabSettings";
+    private static final String KEY_LIMIT_SETTINGS = "limitSettings";
 
     private static final ReplaceOptions UPSERT = new ReplaceOptions().upsert(true);
 
@@ -623,6 +624,17 @@ public final class PermissionStore {
             }
         }
 
+        // Player-limit settings
+        Document limitSettingsDoc = col(COL_SETTINGS).find(Filters.eq("_id", KEY_LIMIT_SETTINGS)).first();
+        if (limitSettingsDoc != null) {
+            PermissionModels.LimitSettings ls = new PermissionModels.LimitSettings();
+            ls.enabled = Boolean.TRUE.equals(limitSettingsDoc.getBoolean("enabled", false));
+            ls.max = intFrom(limitSettingsDoc.get("max"), 20);
+            String km = limitSettingsDoc.getString("kickMessage");
+            if (km != null && !km.isBlank()) ls.kickMessage = km;
+            pd.limitSettings = ls;
+        }
+
         return pd;
     }
 
@@ -660,6 +672,38 @@ public final class PermissionStore {
         publishEvent("settings", "tab");
     }
 
+    public PermissionModels.LimitSettings getLimitSettings() {
+        this.lock.readLock().lock();
+        try {
+            return this.data.limitSettings != null ? this.data.limitSettings : new PermissionModels.LimitSettings();
+        } finally {
+            this.lock.readLock().unlock();
+        }
+    }
+
+    public void saveLimitSettings(PermissionModels.LimitSettings settings) throws IOException {
+        Objects.requireNonNull(settings, "settings");
+        settings.sanitize();
+        this.lock.writeLock().lock();
+        try {
+            col(COL_SETTINGS).replaceOne(
+                    Filters.eq("_id", KEY_LIMIT_SETTINGS),
+                    new Document("_id", KEY_LIMIT_SETTINGS)
+                            .append("enabled", settings.enabled)
+                            .append("max", settings.max)
+                            .append("kickMessage", settings.kickMessage),
+                    UPSERT);
+            this.data.limitSettings = settings;
+            this.cachedSnapshot = null;
+        } catch (Exception ex) {
+            throw new IOException("Unable to save limit settings", ex);
+        } finally {
+            this.lock.writeLock().unlock();
+        }
+        fireChanged();
+        publishEvent("settings", "limit");
+    }
+
     private void writeDefaultsIfMissing() {
         col(COL_SETTINGS).replaceOne(
                 Filters.eq("_id", KEY_DEFAULT_RANK),
@@ -692,7 +736,8 @@ public final class PermissionStore {
                 .append("weight",      rank.weight)
                 .append("parents",     rank.parents)
                 .append("permissions", perms)
-                .append("meta",        new Document(rank.meta));
+                .append("meta",        new Document(rank.meta))
+                .append("bypassPlayerLimit", rank.bypassPlayerLimit);
     }
 
     private static Rank docToRank(Document doc) {
@@ -703,6 +748,7 @@ public final class PermissionStore {
         rank.suffix      = doc.getString("suffix");
         rank.weight      = intFrom(doc.get("weight"), 0);
         rank.parents     = doc.getList("parents", String.class, new ArrayList<>());
+        rank.bypassPlayerLimit = Boolean.TRUE.equals(doc.getBoolean("bypassPlayerLimit", false));
 
         Document meta = doc.get("meta", Document.class);
         if (meta != null) {
