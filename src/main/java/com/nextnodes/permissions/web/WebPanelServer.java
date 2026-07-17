@@ -409,6 +409,22 @@ public final class WebPanelServer implements AutoCloseable {
                 sendJson(exchange, 200, ok());
                 return;
             }
+            // --- límite de jugadores ---
+            if (path.equals("/api/settings/limit") && method.equals("GET")) {
+                sendJson(exchange, 200, GSON.toJsonTree(this.store.getLimitSettings()).getAsJsonObject());
+                return;
+            }
+            if (path.equals("/api/settings/limit") && method.equals("PUT")) {
+                PermissionModels.LimitSettings ls = GSON.fromJson(readBody(exchange), PermissionModels.LimitSettings.class);
+                if (ls == null) { sendJson(exchange, 400, error("JSON inválido")); return; }
+                this.store.saveLimitSettings(ls);
+                if (this.auditLog != null) {
+                    this.auditLog.log("web-panel", "web-panel", "limit.save", "", "",
+                            "enabled=" + ls.enabled + " max=" + ls.max);
+                }
+                sendJson(exchange, 200, ok());
+                return;
+            }
             // --- API key management ---
             if (path.equals("/api/apikey") && method.equals("GET")) {
                 String key = this.store.getApiKey();
