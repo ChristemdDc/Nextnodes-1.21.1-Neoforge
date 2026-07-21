@@ -398,7 +398,7 @@
       const isRank=kind==='rank', wrap=document.createElement('div'); wrap.className='modalBackdrop';
       wrap.innerHTML=`<div class="modal"><div class="modalHead"><div class="brandLine"><div class="logoMark"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">${isRank?'<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>':'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>'}</svg></div><div><h2>${isRank?'Editor de rango':'Editor de jugador'}</h2><div class="muted">${isRank?'Configura identidad, prefijo, herencia y comandos.':'Gestiona rangos asignados y permisos directos.'}</div></div></div><button class="icon" data-close>X</button></div><div class="modalBody">${isRank?rankEditor(data):userEditor(data)}</div><div class="modalFoot"><button data-close>Cancelar</button><button class="primary" data-save><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Guardar cambios</button></div></div>`;
       document.body.appendChild(wrap); wrap.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>wrap.remove());
-      if (isRank) { syncPrefixPreview(); syncSuffixPreview(); renderModalCommands(); } else renderUserModalCommands();
+      if (isRank) { syncPrefixPreview(); syncSuffixPreview(); renderModalCommands(); } else { renderUserModalCommands(); initUserRankRows(); }
       wrap.querySelector('[data-save]').onclick=async()=>{ const updated=isRank?readRankEditor():readUserEditor(data); await api((isRank?'/api/ranks/':'/api/users/')+encodeURIComponent(isRank?updated.name:updated.uuid), {method:'PUT', body:updated}); wrap.remove(); toast('Cambios guardados'); };
     }
     function rankEditor(r) {
@@ -431,7 +431,9 @@
         <div class="editorSection"><div class="sectionHeader"><h3><span class="sectionIcon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span> Información del jugador</h3></div>
           <div class="sectionBody"><div class="editorFields cols-2"><label>Nombre<input id="user_name" value="${escapeAttr(u.name||'')}"></label><label>UUID<input id="user_uuid" value="${escapeAttr(u.uuid)}" readonly></label></div></div></div>
         <div class="editorSection"><div class="sectionHeader"><h3><span class="sectionIcon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></span> Rangos asignados</h3></div>
-          <div class="sectionBody"><div class="editorFields cols-2"><label>Rango primario<select id="user_primary">${Object.values(state.ranks||{}).map(r=>`<option value="${escapeAttr(r.name)}" ${u.primaryRank===r.name?'selected':''}>${escapeHtml(r.displayName||r.name)}</option>`).join('')}</select></label><label>Rangos adicionales (separados por coma)<input id="user_ranks" list="userRankOptions" value="${escapeAttr((u.ranks||[]).join(', '))}"></label></div><datalist id="userRankOptions">${options}</datalist><div class="editorFields cols-2"><label>Tag personal (después del sufijo)<input id="user_tag" value="${escapeAttr(u.tag||'')}" placeholder="[pepsi]"></label></div></div></div>
+          <div class="sectionBody"><div class="editorFields cols-2"><label>Rango primario<select id="user_primary">${Object.values(state.ranks||{}).map(r=>`<option value="${escapeAttr(r.name)}" ${u.primaryRank===r.name?'selected':''}>${escapeHtml(r.displayName||r.name)}</option>`).join('')}</select></label><label>Tag personal (después del sufijo)<input id="user_tag" value="${escapeAttr(u.tag||'')}" placeholder="[pepsi]"></label></div>
+          <div class="stack" id="user_rank_rows">${(u.ranks||[]).map(n=>userRankRowHtml(n,(u.rankExpiries||{})[n]||null)).join('') || '<div class="empty">Sin rangos asignados.</div>'}</div>
+          <div class="row" style="gap:8px"><select id="user_rank_add">${options}</select><button onclick="addUserRankRow()">+ Añadir rango</button></div></div></div>
         <input type="hidden" id="user_command_rules_json" value="${escapeAttr(JSON.stringify((u.permissions||[]).filter(isCommandRule)))}">
         <div class="editorSection"><div class="sectionHeader"><h3><span class="sectionIcon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span> Comandos directos</h3><span class="muted">${(state.commands||[]).length} detectados</span></div>
           <div class="sectionBody"><div class="toolbar"><input id="userModalCommandSearch" placeholder="Filtrar comandos..." oninput="renderUserModalCommands()"><button class="good" onclick="setUserModalVisibleCommands(true)">Permitir todos</button><button class="bad" onclick="setUserModalVisibleCommands(false)">Bloquear todos</button><button onclick="setUserModalVisibleCommands(null)">Reiniciar</button></div><div class="modalCommandGroups" id="userModalCommands"></div></div></div>
@@ -462,7 +464,57 @@
     function ruleHtml(rule={node:'',value:true,mode:'literal',contexts:{}}){return `<div class="rule" data-rule><input data-node value="${escapeAttr(rule.node||'')}" placeholder="permiso.mod o mod.*"><select data-value><option value="true" ${rule.value?'selected':''}>Permitir</option><option value="false" ${!rule.value?'selected':''}>Bloquear</option></select><select data-mode><option ${rule.mode==='literal'?'selected':''}>literal</option><option ${rule.mode==='wildcard'?'selected':''}>wildcard</option><option ${rule.mode==='regex'?'selected':''}>regex</option></select><button class="icon bad" onclick="this.closest('[data-rule]').remove()">X</button></div>`;}
     function addRule(prefix){document.getElementById(prefix+'_rules').insertAdjacentHTML('beforeend', ruleHtml());}
     function readRankEditor(){const id=document.getElementById('rank_id').value.trim().toLowerCase(); const meta=readJsonBox('rank_meta'); meta.gradientStart=document.getElementById('rank_grad_a')?.value || meta.gradientStart; meta.gradientMiddle=document.getElementById('rank_grad_m')?.value || meta.gradientMiddle; meta.gradientEnd=document.getElementById('rank_grad_b')?.value || meta.gradientEnd; return {name:id, displayName:document.getElementById('rank_name').value, prefix:document.getElementById('rank_prefix').value, suffix:document.getElementById('rank_suffix').value, weight:Number(document.getElementById('rank_weight').value||0), parents:splitList(document.getElementById('rank_parents').value), permissions:[...modalCommandRules(), ...readRules('rank')], meta, bypassPlayerLimit:document.getElementById('rank_bypass_limit').checked};}
-    function readUserEditor(original){return {uuid:document.getElementById('user_uuid').value, name:document.getElementById('user_name').value, tag:document.getElementById('user_tag').value, primaryRank:document.getElementById('user_primary').value, ranks:splitList(document.getElementById('user_ranks').value), permissions:[...userModalCommandRules(), ...readRules('user')], meta:readJsonBox('user_meta'), lastSeen:original.lastSeen||Date.now(), online:!!original.online};}
+    function readUserEditor(original){
+      const rows=[...document.querySelectorAll('#user_rank_rows [data-rank-row]')];
+      const ranks=[], rankExpiries={};
+      for(const row of rows){ const name=row.getAttribute('data-rank'); if(!name||ranks.includes(name))continue; ranks.push(name); const ms=rankExpiryOf(row); if(ms)rankExpiries[name]=ms; }
+      const primary=document.getElementById('user_primary').value;
+      if(primary && !ranks.includes(primary)) ranks.push(primary);
+      return {uuid:document.getElementById('user_uuid').value, name:document.getElementById('user_name').value, tag:document.getElementById('user_tag').value, primaryRank:primary, ranks, rankExpiries, permissions:[...userModalCommandRules(), ...readRules('user')], meta:readJsonBox('user_meta'), lastSeen:original.lastSeen||Date.now(), online:!!original.online};
+    }
+    // --- Filas de rango con tiempo (editor de jugador) ---
+    function userRankRowHtml(name, expiryMs){
+      const r=state.ranks?.[name], label=escapeHtml(r?.displayName||name), timed=!!expiryMs;
+      return `<div class="rankTimeRow" data-rank-row data-rank="${escapeAttr(name)}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:var(--inset)">
+        <span style="font-weight:700;min-width:96px">${label}</span>
+        <select data-perm onchange="syncRankRow(this)"><option value="perm" ${timed?'':'selected'}>Permanente</option><option value="timed" ${timed?'selected':''}>Con tiempo</option></select>
+        <span data-timed ${timed?'':'hidden'} style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <select data-tmode onchange="syncRankRow(this)"><option value="dur" ${timed?'':'selected'}>Duración</option><option value="date" ${timed?'selected':''}>Fecha</option></select>
+          <span data-dur-wrap ${timed?'hidden':''} style="display:flex;gap:6px;align-items:center"><input type="number" min="1" data-dur-amount value="30" oninput="syncRankRow(this)" style="width:72px"><select data-dur-unit onchange="syncRankRow(this)"><option value="d">días</option><option value="h">horas</option></select></span>
+          <input type="datetime-local" data-date ${timed?'':'hidden'} value="${timed?escapeAttr(toLocalDatetime(expiryMs)):''}" oninput="syncRankRow(this)">
+        </span>
+        <span class="muted" data-preview style="flex:1;min-width:150px;font-size:12px"></span>
+        <button class="icon bad" title="Quitar rango" onclick="this.closest('[data-rank-row]').remove()">X</button>
+      </div>`;
+    }
+    function initUserRankRows(){ document.querySelectorAll('#user_rank_rows [data-rank-row]').forEach(row=>syncRankRow(row.querySelector('[data-perm]'))); }
+    function addUserRankRow(){
+      const name=document.getElementById('user_rank_add')?.value; if(!name)return;
+      const container=document.getElementById('user_rank_rows');
+      if([...container.querySelectorAll('[data-rank-row]')].some(r=>r.getAttribute('data-rank')===name)){ toast('Ese rango ya está asignado'); return; }
+      const emptyEl=container.querySelector('.empty'); if(emptyEl)emptyEl.remove();
+      container.insertAdjacentHTML('beforeend', userRankRowHtml(name, null));
+      syncRankRow(container.lastElementChild.querySelector('[data-perm]'));
+    }
+    function syncRankRow(el){
+      const row=el.closest('[data-rank-row]'); if(!row)return;
+      const perm=row.querySelector('[data-perm]').value, timed=row.querySelector('[data-timed]'), preview=row.querySelector('[data-preview]');
+      timed.hidden = perm!=='timed';
+      if(perm!=='timed'){ preview.textContent='Sin vencimiento'; return; }
+      const tmode=row.querySelector('[data-tmode]').value;
+      row.querySelector('[data-dur-wrap]').hidden = tmode!=='dur';
+      row.querySelector('[data-date]').hidden = tmode!=='date';
+      const ms=rankExpiryOf(row);
+      preview.textContent = ms ? ('Expira: '+formatExpiry(ms)+' · '+humanizeUntil(ms)) : 'Indica cuándo expira';
+    }
+    function rankExpiryOf(row){
+      if(row.querySelector('[data-perm]').value!=='timed')return null;
+      if(row.querySelector('[data-tmode]').value==='dur'){ const amt=Number(row.querySelector('[data-dur-amount]').value); if(!(amt>0))return null; const mult=row.querySelector('[data-dur-unit]').value==='h'?3600000:86400000; return Date.now()+Math.round(amt*mult); }
+      const v=row.querySelector('[data-date]').value; if(!v)return null; const t=new Date(v).getTime(); return isNaN(t)?null:t;
+    }
+    function toLocalDatetime(ms){ const d=new Date(ms), p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }
+    function formatExpiry(ms){ try{ return new Date(ms).toLocaleString('es-ES',{dateStyle:'medium',timeStyle:'short'}); }catch(e){ return new Date(ms).toLocaleString(); } }
+    function humanizeUntil(ms){ const diff=ms-Date.now(); if(diff<=0)return 'vencido'; const mins=Math.floor(diff/60000), hrs=Math.floor(mins/60), days=Math.floor(hrs/24); if(days>=1)return 'en '+days+' día'+(days===1?'':'s'); if(hrs>=1)return 'en '+hrs+' hora'+(hrs===1?'':'s'); return 'en '+mins+' min'; }
     function readRules(prefix){return [...document.querySelectorAll(`#${prefix}_rules [data-rule]`)].map(row=>({node:row.querySelector('[data-node]').value.trim().toLowerCase(), value:row.querySelector('[data-value]').value==='true', mode:row.querySelector('[data-mode]').value, contexts:{}})).filter(r=>r.node);}
     function readJsonBox(id){try{return JSON.parse(document.getElementById(id).value||'{}')}catch{toast('Meta JSON inválido'); throw new Error('Meta JSON inválido')}}
     function newRank(){openModal('rank',{name:'nuevo',displayName:'Nuevo',prefix:'&7[Nuevo] ',suffix:'',weight:0,parents:[],permissions:[],meta:{gradientStart:'#4ff0ff',gradientMiddle:'#9c6bff',gradientEnd:'#ff4f9b'}})}
