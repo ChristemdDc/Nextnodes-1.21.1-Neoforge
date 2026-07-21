@@ -774,7 +774,9 @@ public final class PermissionStore {
                 .append("meta",        new Document(user.meta))
                 .append("rankExpiries", new Document(user.rankExpiries))
                 .append("lastSeen",    user.lastSeen)
-                .append("online",      user.online);
+                .append("online",      user.online)
+                .append("disguiseName", user.disguiseName)
+                .append("disguiseRank", user.disguiseRank);
     }
 
     private static UserEntry docToUser(Document doc) {
@@ -786,6 +788,8 @@ public final class PermissionStore {
         user.ranks       = doc.getList("ranks", String.class, new ArrayList<>());
         user.lastSeen    = longFrom(doc.get("lastSeen"), 0L);
         user.online      = Boolean.TRUE.equals(doc.getBoolean("online"));
+        user.disguiseName = doc.getString("disguiseName");
+        user.disguiseRank = doc.getString("disguiseRank");
 
         Document meta = doc.get("meta", Document.class);
         if (meta != null) {
