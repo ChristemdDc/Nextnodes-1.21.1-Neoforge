@@ -95,19 +95,18 @@ public final class NextNodesCommands {
                         .then(Commands.literal("web")
                                 .executes(context -> {
                                     try {
-                                        if (this.mod.isWebPanelRunning()) {
-                                            context.getSource().sendSuccess(
-                                                    () -> styledMessage("El panel web ya esta activo.", this.mod.webUrl(), null), false);
-                                            return 1;
-                                        }
-                                        String password = this.mod.startWebPanel();
-                                        String url = this.mod.webUrl();
+                                        boolean here = this.mod.openOrReuseWebPanel();
+                                        String url = this.mod.webUrlAlways();
+                                        String key = this.mod.webAutoLoginKey();
+                                        String header = here
+                                                ? "Panel web abierto (15 minutos)."
+                                                : "El panel web ya esta abierto en otro servidor.";
                                         context.getSource().sendSuccess(
-                                                () -> styledMessage("Panel web iniciado (15 minutos).", url, password), false);
+                                                () -> styledMessage(header, url, key), false);
                                         return 1;
                                     } catch (IOException ex) {
                                         context.getSource().sendFailure(
-                                                Component.literal("No se pudo iniciar el panel: " + ex.getMessage()));
+                                                Component.literal("No se pudo abrir el panel: " + ex.getMessage()));
                                         return 0;
                                     }
                                 })))

@@ -110,6 +110,17 @@ public final class WebPanelServer implements AutoCloseable {
         return "http://" + this.ip + ":" + this.port + "/";
     }
 
+    /** Returns the shared, persistent API key (creating one if missing) so any backend can hand out an
+     *  auto-login link to the single running panel. Stored in Mongo, so every server sees the same key. */
+    public String ensureApiKey() {
+        String key = this.store.getApiKey();
+        if (key == null || key.isBlank()) {
+            key = newToken();
+            this.store.setApiKey(key);
+        }
+        return key;
+    }
+
     public long remainingMs() {
         long remaining = this.sessionExpiresAt - System.currentTimeMillis();
         return Math.max(0, remaining);
@@ -484,7 +495,12 @@ public final class WebPanelServer implements AutoCloseable {
         }
         JsonObject body = readJson(exchange);
         String attempt = body.has("password") ? body.get("password").getAsString() : "";
-        if (this.password != null && this.password.equals(attempt)) {
+        // Acepta la contraseña de sesión O la API key compartida (misma DB para todos los backends),
+        // para que un enlace de auto-login funcione contra el panel lo aloje el servidor que lo aloje.
+        String apiKey = this.store.getApiKey();
+        boolean accepted = (this.password != null && this.password.equals(attempt))
+                || (apiKey != null && !apiKey.isBlank() && apiKey.equals(attempt));
+        if (accepted) {
             this.loginAttempts.set(0);
             JsonObject response = new JsonObject();
             response.addProperty("token", this.token);

@@ -175,13 +175,38 @@ public final class NextNodesPermissions {
         return this.webPanel == null || !this.webPanel.isRunning() ? null : this.webPanel.url();
     }
 
-    public String startWebPanel() throws IOException {
+    /**
+     * Ensures the shared web panel is reachable and returns whether THIS server hosts it. Starts it here
+     * if possible; if the port is already bound by a sibling backend on the same machine, reuses that
+     * panel instead of failing. Throws only on genuine errors (not a port conflict).
+     * @return true if this server now hosts the panel; false if reusing another backend's panel.
+     */
+    public boolean openOrReuseWebPanel() throws IOException {
         if (this.webPanel == null) {
             throw new IllegalStateException("Web panel not initialized");
         }
-        String password = this.webPanel.start();
-        LOGGER.info("NextNodes Permissions web panel started at {}", this.webPanel.url());
-        return password;
+        if (this.webPanel.isRunning()) {
+            return true;
+        }
+        try {
+            this.webPanel.start();
+            LOGGER.info("NextNodes Permissions web panel started at {}", this.webPanel.url());
+            return true;
+        } catch (java.net.BindException ex) {
+            // Otro backend en esta máquina ya tiene el puerto: se reutiliza ese panel (misma DB, misma URL).
+            LOGGER.info("Puerto del panel ocupado por otro backend; se reutiliza el panel en {}", this.webPanel.url());
+            return false;
+        }
+    }
+
+    /** The panel URL (host:port), available even when this server is not the one hosting it. */
+    public String webUrlAlways() {
+        return this.webPanel == null ? null : this.webPanel.url();
+    }
+
+    /** The shared auto-login key (persistent API key in Mongo), for a link that works against any backend. */
+    public String webAutoLoginKey() {
+        return this.webPanel == null ? null : this.webPanel.ensureApiKey();
     }
 
     public void stopWebPanel() {
