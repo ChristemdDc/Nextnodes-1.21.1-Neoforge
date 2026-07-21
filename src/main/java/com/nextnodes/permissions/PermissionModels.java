@@ -113,6 +113,8 @@ public final class PermissionModels {
         public List<PermissionRule> permissions = new ArrayList<>();
         public Map<String, String> meta = new LinkedHashMap<>();
         public Map<String, Long> rankExpiries = new LinkedHashMap<>();
+        public String disguiseName = "";
+        public String disguiseRank = "";
         public long lastSeen = 0L;
         public boolean online = false;
 
@@ -141,6 +143,10 @@ public final class PermissionModels {
             if (this.rankExpiries == null) {
                 this.rankExpiries = new LinkedHashMap<>();
             }
+            if (this.disguiseName == null) {
+                this.disguiseName = "";
+            }
+            this.disguiseRank = normalizeName(this.disguiseRank);
         }
     }
 
