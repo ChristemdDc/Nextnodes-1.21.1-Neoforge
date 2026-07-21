@@ -389,11 +389,31 @@ public final class NextNodesPermissions {
     }
 
     private Component composeFullName(UUID uuid, String baseName) {
+        String shown = baseName;
+        try {
+            PermissionModels.UserEntry user = this.store.snapshot().users.get(uuid.toString());
+            if (user != null && user.disguiseName != null && !user.disguiseName.isBlank()) {
+                shown = user.disguiseName;
+            }
+        } catch (Exception ignored) {
+        }
         return PrefixFormatter.composeName(
                 this.resolver.resolvePrefix(uuid),
-                baseName,
+                shown,
                 this.resolver.resolveSuffix(uuid),
                 this.resolver.resolveTag(uuid));
+    }
+
+    @net.neoforged.bus.api.SubscribeEvent
+    public void onTabListNameFormat(net.neoforged.neoforge.event.entity.player.PlayerEvent.TabListNameFormat event) {
+        if (this.store == null) {
+            return;
+        }
+        UUID uuid = event.getEntity().getUUID();
+        PermissionModels.UserEntry user = this.store.snapshot().users.get(uuid.toString());
+        if (user != null && user.disguiseName != null && !user.disguiseName.isBlank()) {
+            event.setDisplayName(composeFullName(uuid, user.disguiseName));
+        }
     }
 
     // Intentionally NOT overriding PlayerEvent.NameFormat: getDisplayName() already team-formats the
