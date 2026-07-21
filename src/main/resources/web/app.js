@@ -3,6 +3,7 @@
     let commandFilter = '', commandCategory = 'all', rankFilter = '';
     const collapsedCommandGroups = new Set();
     let sessionTotalMs = 15*60*1000, sessionRemainingMs = 0, sessionTimer = null, sessionExtendShown = false;
+    let reloadTimer = null, reloadPending = false;
 
     const colors = [
       ['0','Negro','#000000'], ['1','Azul oscuro','#0000aa'], ['2','Verde oscuro','#00aa00'], ['3','Aqua oscuro','#00aaaa'],
@@ -88,7 +89,7 @@
       startSessionTimer();
       if (events) events.close();
       events = new EventSource('/api/events?token=' + encodeURIComponent(token));
-      events.addEventListener('changed', load);
+      events.addEventListener('changed', scheduleReload);
       events.addEventListener('ready', () => setStatus('En vivo'));
       events.addEventListener('session_expired', () => showSessionExpired());
       events.onerror = () => setStatus('Reconectando...');
@@ -102,6 +103,14 @@
       return res.headers.get('content-type')?.includes('json') ? res.json() : res.text();
     }
     async function load() { state = await api('/api/state'); render(); setStatus('Sincronizado'); }
+    // Agrupa ráfagas de eventos 'changed' en un solo re-render, y nunca recarga mientras hay un editor
+    // abierto (evitaría perder lo que escribes y provoca el parpadeo). Al cerrar el editor se recarga si quedó pendiente.
+    function scheduleReload() {
+      if (document.querySelector('.modalBackdrop')) { reloadPending = true; return; }
+      if (reloadTimer) return;
+      reloadTimer = setTimeout(() => { reloadTimer = null; load(); }, 500);
+    }
+    function flushPendingReload() { if (reloadPending) { reloadPending = false; scheduleReload(); } }
     function toggleRail() { const app=document.getElementById('app'); app.classList.toggle('collapsed'); localStorage.setItem('nn_collapsed', app.classList.contains('collapsed') ? '1' : '0'); }
     function showTab(next) {
       tab = next;
@@ -397,9 +406,10 @@
     function openModal(kind, data) {
       const isRank=kind==='rank', wrap=document.createElement('div'); wrap.className='modalBackdrop';
       wrap.innerHTML=`<div class="modal"><div class="modalHead"><div class="brandLine"><div class="logoMark"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">${isRank?'<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>':'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>'}</svg></div><div><h2>${isRank?'Editor de rango':'Editor de jugador'}</h2><div class="muted">${isRank?'Configura identidad, prefijo, herencia y comandos.':'Gestiona rangos asignados y permisos directos.'}</div></div></div><button class="icon" data-close>X</button></div><div class="modalBody">${isRank?rankEditor(data):userEditor(data)}</div><div class="modalFoot"><button data-close>Cancelar</button><button class="primary" data-save><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Guardar cambios</button></div></div>`;
-      document.body.appendChild(wrap); wrap.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>wrap.remove());
+      const close=()=>{ wrap.remove(); flushPendingReload(); };
+      document.body.appendChild(wrap); wrap.querySelectorAll('[data-close]').forEach(b=>b.onclick=close);
       if (isRank) { syncPrefixPreview(); syncSuffixPreview(); renderModalCommands(); } else { renderUserModalCommands(); initUserRankRows(); }
-      wrap.querySelector('[data-save]').onclick=async()=>{ const updated=isRank?readRankEditor():readUserEditor(data); await api((isRank?'/api/ranks/':'/api/users/')+encodeURIComponent(isRank?updated.name:updated.uuid), {method:'PUT', body:updated}); wrap.remove(); toast('Cambios guardados'); };
+      wrap.querySelector('[data-save]').onclick=async()=>{ const updated=isRank?readRankEditor():readUserEditor(data); await api((isRank?'/api/ranks/':'/api/users/')+encodeURIComponent(isRank?updated.name:updated.uuid), {method:'PUT', body:updated}); close(); toast('Cambios guardados'); };
     }
     function rankEditor(r) {
       const meta=r.meta || {}, gs=meta.gradientStart || '#4ff0ff', gm=meta.gradientMiddle || '#9c6bff', ge=meta.gradientEnd || '#ff4f9b';
@@ -526,7 +536,8 @@
     function newUser(){const uuid=prompt('UUID del jugador offline'); if(!uuid)return; openModal('user',{uuid,name:'Offline',tag:'',primaryRank:state.defaultRank||'default',ranks:[state.defaultRank||'default'],permissions:[],meta:{},online:false,lastSeen:Date.now()});}
     function isCommandRule(p){return p && (String(p.node||'').startsWith('command.') || String(p.node||'').startsWith('minecraft.command.'));}
     function rankLabel(name){const r=state.ranks?.[name]; return r ? (r.displayName || r.name) : name;}
-    function headUrl(u){return u.uuid ? 'https://mc-heads.net/avatar/'+encodeURIComponent(u.uuid)+'/64' : 'https://mc-heads.net/avatar/Steve/64';}
+    // En modo offline los UUID no resuelven en mc-heads.net (cabeza genérica); el nombre sí, si es una cuenta existente.
+    function headUrl(u){const key=(u&&u.name&&u.name.trim())?u.name.trim():((u&&u.uuid)?u.uuid:'Steve'); return 'https://mc-heads.net/avatar/'+encodeURIComponent(key)+'/64';}
     function splitList(value){return String(value||'').split(',').map(v=>v.trim().toLowerCase()).filter(Boolean);}
     function prefixHtml(text){const map=Object.fromEntries(colors.map(c=>[c[0],c[2]])); let style={color:'#fff',b:false,i:false,u:false,s:false}, out='', buf='', value=String(text||''); const flush=()=>{if(!buf)return; out+=`<span style="color:${style.color};font-weight:${style.b?'800':'700'};font-style:${style.i?'italic':'normal'};text-decoration:${style.u?'underline ':''}${style.s?'line-through':''}">${escapeHtml(buf)}</span>`; buf='';}; for(let i=0;i<value.length;i++){if(value[i]==='&'&&i+1<value.length){if(value[i+1]==='#'&&/^[0-9a-fA-F]{6}$/.test(value.slice(i+2,i+8))){flush(); style={...style,color:'#'+value.slice(i+2,i+8)}; i+=7; continue;} flush(); const c=value[++i].toLowerCase(); if(map[c]) style={...style,color:map[c]}; else if(c==='l')style.b=true; else if(c==='o')style.i=true; else if(c==='n')style.u=true; else if(c==='m')style.s=true; else if(c==='r')style={color:'#fff',b:false,i:false,u:false,s:false};} else buf+=value[i];} flush(); return out || '<span class="muted">Sin prefijo</span>';}
     function hexToRgb(hex){const n=parseInt(hex.replace('#',''),16); return {r:(n>>16)&255,g:(n>>8)&255,b:n&255};}
