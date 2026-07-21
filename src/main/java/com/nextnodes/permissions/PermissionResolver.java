@@ -68,6 +68,11 @@ public final class PermissionResolver {
             Rank defaultRank = data.ranks.get(data.defaultRank);
             return defaultRank == null ? "" : defaultRank.prefix;
         }
+        String disguise = DisguiseResolver.displayRank(user, data.ranks);
+        if (disguise != null) {
+            Rank r = data.ranks.get(disguise);
+            return r == null || r.prefix == null ? "" : r.prefix;
+        }
         for (Rank rank : rankOrder(data, user)) {
             if (rank.prefix != null && !rank.prefix.isBlank()) {
                 return rank.prefix;
@@ -83,6 +88,11 @@ public final class PermissionResolver {
             Rank defaultRank = data.ranks.get(data.defaultRank);
             return defaultRank == null ? "" : defaultRank.suffix;
         }
+        String disguise = DisguiseResolver.displayRank(user, data.ranks);
+        if (disguise != null) {
+            Rank r = data.ranks.get(disguise);
+            return r == null || r.suffix == null ? "" : r.suffix;
+        }
         for (Rank rank : rankOrder(data, user)) {
             if (rank.suffix != null && !rank.suffix.isBlank()) {
                 return rank.suffix;
@@ -94,7 +104,14 @@ public final class PermissionResolver {
     public String resolveTag(UUID uuid) {
         PermissionData data = this.store.snapshot();
         UserEntry user = data.users.get(uuid.toString());
-        return user == null || user.tag == null ? "" : user.tag;
+        if (user == null || user.tag == null) {
+            return "";
+        }
+        // Con disfraz, no mostrar el tag personal real (delataría la identidad).
+        if (DisguiseResolver.displayRank(user, data.ranks) != null) {
+            return "";
+        }
+        return user.tag;
     }
 
     public int resolveWeight(UUID uuid) {
@@ -103,6 +120,11 @@ public final class PermissionResolver {
         if (user == null) {
             Rank defaultRank = data.ranks.get(data.defaultRank);
             return defaultRank == null ? 0 : defaultRank.weight;
+        }
+        String disguise = DisguiseResolver.displayRank(user, data.ranks);
+        if (disguise != null) {
+            Rank r = data.ranks.get(disguise);
+            return r == null ? 0 : r.weight;
         }
         List<Rank> order = rankOrder(data, user);
         // Sort by the weight of the rank that provides the DISPLAYED prefix, so the TAB order matches
