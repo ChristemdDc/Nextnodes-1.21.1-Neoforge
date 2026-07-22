@@ -678,15 +678,21 @@ public final class NextNodesPermissions {
         }
     }
 
-    /** Reenvía la info del jugador a los demás para que el interceptor reescriba el nombre sobre la cabeza en vivo. */
+    /** Reenvía la info del jugador a todos para actualizar en vivo el nombre sobre la cabeza (perfil, vía el
+     *  interceptor) Y en el TAB (listName). Incluye ADD_PLAYER + UPDATE_DISPLAY_NAME: si no, el remove borra
+     *  el listName de la Fase 1 y el TAB volvería al nombre real. */
     private void resendPlayerInfo(ServerPlayer player) {
         MinecraftServer s = this.server;
         if (s == null || player.connection == null) return;
         try {
+            var actions = java.util.EnumSet.of(
+                    net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER,
+                    net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LISTED,
+                    net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket.Action.UPDATE_DISPLAY_NAME);
             var remove = new net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket(
                     java.util.List.of(player.getUUID()));
             var add = new net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket(
-                    net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER, player);
+                    actions, java.util.List.of(player));
             // Incluye al propio jugador: se reescribe para todos, así el equipo con nombre falso cuadra.
             for (ServerPlayer viewer : s.getPlayerList().getPlayers()) {
                 if (viewer.connection == null) continue;
