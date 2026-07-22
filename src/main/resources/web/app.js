@@ -102,7 +102,18 @@
       if (!res.ok) throw new Error((await res.json()).error || res.statusText);
       return res.headers.get('content-type')?.includes('json') ? res.json() : res.text();
     }
-    async function load() { state = await api('/api/state'); render(); setStatus('Sincronizado'); }
+    let lastStateSig = null;
+    // Firma del estado ignorando campos volátiles (lastSeen): muchos eventos 'changed' solo tocan eso
+    // (otro jugador cambió de servidor, etc.) y no afectan lo que se ve. Si nada visible cambió, no
+    // re-renderizamos → se acaba el parpadeo en cada actualización.
+    function stateSignature(s) { try { return JSON.stringify(s, (k, v) => k === 'lastSeen' ? 0 : v); } catch (e) { return String(Math.random()); } }
+    async function load() {
+      state = await api('/api/state');
+      const sig = stateSignature(state);
+      if (sig === lastStateSig) { setStatus('Sincronizado'); return; }
+      lastStateSig = sig;
+      render(); setStatus('Sincronizado');
+    }
     // Agrupa ráfagas de eventos 'changed' en un solo re-render, y nunca recarga mientras hay un editor
     // abierto (evitaría perder lo que escribes y provoca el parpadeo). Al cerrar el editor se recarga si quedó pendiente.
     function scheduleReload() {
