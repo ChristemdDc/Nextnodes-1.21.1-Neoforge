@@ -17,8 +17,8 @@ import java.util.UUID;
 /**
  * Netty outbound handler (one per connection) that rewrites the {@code GameProfile} name of disguised
  * players in {@link ClientboundPlayerInfoUpdatePacket} ADD_PLAYER packets, so their over-head nametag
- * shows the disguise name on this viewer's client. The disguised player is never rewritten for their
- * own connection. Pinned to Minecraft 1.21.1 (field name {@code entries}).
+ * shows the disguise name. Rewrites for EVERY viewer (including the disguised player themselves) so the
+ * fake-name scoreboard team stays consistent across all clients. Pinned to Minecraft 1.21.1 (field {@code entries}).
  */
 public final class DisguisePacketInterceptor extends ChannelOutboundHandlerAdapter {
     public static final String HANDLER_NAME = "nextnodes_disguise";
@@ -26,11 +26,9 @@ public final class DisguisePacketInterceptor extends ChannelOutboundHandlerAdapt
     /** Reflection into the packet's private {@code entries} list — null if unavailable (then no rewrite). */
     private static final Field ENTRIES_FIELD = resolveEntriesField();
 
-    private final UUID viewerUuid;
     private final PermissionStore store;
 
-    public DisguisePacketInterceptor(UUID viewerUuid, PermissionStore store) {
-        this.viewerUuid = viewerUuid;
+    public DisguisePacketInterceptor(PermissionStore store) {
         this.store = store;
     }
 
@@ -89,11 +87,8 @@ public final class DisguisePacketInterceptor extends ChannelOutboundHandlerAdapt
         return copy;
     }
 
-    /** @return the disguise name for {@code target}, or null (real name) — never rewrites the viewer's own entry. */
+    /** @return the disguise name for {@code target}, or null (real name). Rewrites for all viewers. */
     private String disguiseFor(UUID target) {
-        if (target.equals(this.viewerUuid)) {
-            return null;
-        }
         UserEntry user = this.store.snapshot().users.get(target.toString());
         return DisguiseName.shownName(user, false);
     }

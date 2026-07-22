@@ -81,6 +81,8 @@ public final class NextNodesPermissions {
     private com.nextnodes.permissions.ban.BanStore banStore;
     /** Tracks each online player's primaryRank to detect changes and notify them. */
     private final Map<UUID, String> prevPrimaryRanks = new ConcurrentHashMap<>();
+    /** Tracks each online player's disguise name to resend their info only when it actually changes. */
+    private final Map<UUID, String> prevDisguiseNames = new ConcurrentHashMap<>();
     private MinecraftServer server;
     private WebPanelServer webPanel;
     private ScheduledExecutorService pingScheduler;
@@ -630,6 +632,15 @@ public final class NextNodesPermissions {
     private void refreshPlayer(ServerPlayer player) {
         refreshPlayerName(player);
         sendFilteredCommands(player);
+        // Solo cuando el disfraz de ESTE jugador cambió, reenviar su info (no en cada evento -> sin flood).
+        if (this.resolver != null) {
+            String cur = this.resolver.disguiseNameOf(player.getUUID());
+            String prev = this.prevDisguiseNames.getOrDefault(player.getUUID(), "");
+            if (!cur.equals(prev)) {
+                this.prevDisguiseNames.put(player.getUUID(), cur);
+                resendPlayerInfo(player);
+            }
+        }
     }
 
     private void refreshPlayerName(ServerPlayer player) {
@@ -638,7 +649,6 @@ public final class NextNodesPermissions {
         if (this.tabListManager != null) {
             this.tabListManager.apply(player);
         }
-        resendPlayerInfo(player);
     }
 
     /** Instala el interceptor de disfraz en el pipeline netty del jugador (reflexión sobre Connection.channel). */
@@ -653,12 +663,14 @@ public final class NextNodesPermissions {
             if (pipe.get(com.nextnodes.permissions.integration.DisguisePacketInterceptor.HANDLER_NAME) != null) {
                 return; // ya instalado
             }
-            var handler = new com.nextnodes.permissions.integration.DisguisePacketInterceptor(player.getUUID(), this.store);
+            var handler = new com.nextnodes.permissions.integration.DisguisePacketInterceptor(this.store);
             if (pipe.get("encoder") != null) {
                 pipe.addBefore("encoder", com.nextnodes.permissions.integration.DisguisePacketInterceptor.HANDLER_NAME, handler);
             } else {
                 pipe.addFirst(com.nextnodes.permissions.integration.DisguisePacketInterceptor.HANDLER_NAME, handler);
             }
+            LOGGER.info("Interceptor de disfraz instalado para {} (handlers: {})",
+                    player.getGameProfile().getName(), pipe.names());
         } catch (Exception ex) {
             LOGGER.warn("No se pudo instalar el interceptor de disfraz para {}: {}",
                     player.getGameProfile().getName(), ex.toString());
@@ -674,8 +686,9 @@ public final class NextNodesPermissions {
                     java.util.List.of(player.getUUID()));
             var add = new net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket(
                     net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER, player);
+            // Incluye al propio jugador: se reescribe para todos, así el equipo con nombre falso cuadra.
             for (ServerPlayer viewer : s.getPlayerList().getPlayers()) {
-                if (viewer == player || viewer.connection == null) continue;
+                if (viewer.connection == null) continue;
                 viewer.connection.send(remove);
                 viewer.connection.send(add);
             }
