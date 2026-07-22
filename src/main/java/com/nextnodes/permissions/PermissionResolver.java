@@ -114,6 +114,12 @@ public final class PermissionResolver {
         return user.tag;
     }
 
+    /** The player's disguise name (shown over the head / in the fake-name team), or "" if not disguised. */
+    public String disguiseNameOf(UUID uuid) {
+        UserEntry user = this.store.snapshot().users.get(uuid.toString());
+        return user == null || user.disguiseName == null ? "" : user.disguiseName.trim();
+    }
+
     /** The player's assigned catalog label text (after the name), or "" if none. Hidden while disguised. */
     public String resolveLabel(UUID uuid) {
         PermissionData data = this.store.snapshot();

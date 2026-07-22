@@ -386,7 +386,10 @@ public final class NextNodesPermissions {
             if (currentServer != null) {
                 currentServer.execute(() -> {
                     ServerPlayer player = currentServer.getPlayerList().getPlayer(uuid);
-                    if (player != null) refreshPlayer(player);
+                    if (player != null) {
+                        installDisguiseInterceptor(player);
+                        refreshPlayer(player);
+                    }
                 });
             }
         });
@@ -634,6 +637,49 @@ public final class NextNodesPermissions {
         player.refreshTabListName();
         if (this.tabListManager != null) {
             this.tabListManager.apply(player);
+        }
+        resendPlayerInfo(player);
+    }
+
+    /** Instala el interceptor de disfraz en el pipeline netty del jugador (reflexión sobre Connection.channel). */
+    private void installDisguiseInterceptor(ServerPlayer player) {
+        try {
+            net.minecraft.network.Connection conn = player.connection.getConnection();
+            java.lang.reflect.Field chField = net.minecraft.network.Connection.class.getDeclaredField("channel");
+            chField.setAccessible(true);
+            io.netty.channel.Channel channel = (io.netty.channel.Channel) chField.get(conn);
+            if (channel == null) return;
+            io.netty.channel.ChannelPipeline pipe = channel.pipeline();
+            if (pipe.get(com.nextnodes.permissions.integration.DisguisePacketInterceptor.HANDLER_NAME) != null) {
+                return; // ya instalado
+            }
+            var handler = new com.nextnodes.permissions.integration.DisguisePacketInterceptor(player.getUUID(), this.store);
+            if (pipe.get("encoder") != null) {
+                pipe.addBefore("encoder", com.nextnodes.permissions.integration.DisguisePacketInterceptor.HANDLER_NAME, handler);
+            } else {
+                pipe.addFirst(com.nextnodes.permissions.integration.DisguisePacketInterceptor.HANDLER_NAME, handler);
+            }
+        } catch (Exception ex) {
+            LOGGER.warn("No se pudo instalar el interceptor de disfraz para {}: {}",
+                    player.getGameProfile().getName(), ex.toString());
+        }
+    }
+
+    /** Reenvía la info del jugador a los demás para que el interceptor reescriba el nombre sobre la cabeza en vivo. */
+    private void resendPlayerInfo(ServerPlayer player) {
+        MinecraftServer s = this.server;
+        if (s == null || player.connection == null) return;
+        try {
+            var remove = new net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket(
+                    java.util.List.of(player.getUUID()));
+            var add = new net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket(
+                    net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER, player);
+            for (ServerPlayer viewer : s.getPlayerList().getPlayers()) {
+                if (viewer == player || viewer.connection == null) continue;
+                viewer.connection.send(remove);
+                viewer.connection.send(add);
+            }
+        } catch (Exception ignored) {
         }
     }
 

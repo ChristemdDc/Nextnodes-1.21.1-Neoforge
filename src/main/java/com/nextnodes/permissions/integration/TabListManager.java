@@ -22,6 +22,8 @@ import java.util.UUID;
  */
 public final class TabListManager {
     private final PermissionResolver resolver;
+    /** El miembro de scoreboard actual de cada jugador (nombre real, o falso si está disfrazado). */
+    private final java.util.Map<UUID, String> memberByPlayer = new java.util.concurrent.ConcurrentHashMap<>();
 
     public TabListManager(PermissionResolver resolver) {
         this.resolver = resolver;
@@ -48,7 +50,16 @@ public final class TabListManager {
         assign(server.getScoreboard(), profile.getId(), profile.getName(), profile.getName());
     }
 
-    private void assign(Scoreboard scoreboard, UUID uuid, String member, String name) {
+    private void assign(Scoreboard scoreboard, UUID uuid, String realMember, String name) {
+        // Con disfraz, el miembro del equipo es el nombre FALSO (que es como el cliente conoce al jugador
+        // tras la reescritura del paquete), para que el prefijo del rango falso y el orden le apliquen.
+        String disguise = this.resolver.disguiseNameOf(uuid);
+        String member = disguise.isBlank() ? realMember : disguise;
+        // Si el miembro cambió (se puso/quitó disfraz), limpiar el miembro anterior de su equipo.
+        String prevMember = this.memberByPlayer.get(uuid);
+        if (prevMember != null && !prevMember.equals(member)) {
+            removeMember(scoreboard, prevMember);
+        }
         String desiredName = TabTeamNaming.teamName(this.resolver.resolveWeight(uuid), name, uuid.toString());
         PlayerTeam previous = scoreboard.getPlayersTeam(member);
         PlayerTeam team = scoreboard.getPlayerTeam(desiredName);
@@ -59,11 +70,22 @@ public final class TabListManager {
         team.setPlayerSuffix(buildSuffix(this.resolver.resolveSuffix(uuid), this.resolver.resolveTag(uuid),
                 this.resolver.resolveLabel(uuid)));
         scoreboard.addPlayerToTeam(member, team);
+        this.memberByPlayer.put(uuid, member);
         if (previous != null
                 && previous.getName().startsWith(TabTeamNaming.TEAM_PREFIX)
                 && !previous.getName().equals(desiredName)
                 && previous.getPlayers().isEmpty()) {
             scoreboard.removePlayerTeam(previous);
+        }
+    }
+
+    private static void removeMember(Scoreboard scoreboard, String member) {
+        PlayerTeam team = scoreboard.getPlayersTeam(member);
+        if (team != null && team.getName().startsWith(TabTeamNaming.TEAM_PREFIX)) {
+            scoreboard.removePlayerFromTeam(member, team);
+            if (team.getPlayers().isEmpty()) {
+                scoreboard.removePlayerTeam(team);
+            }
         }
     }
 
@@ -74,13 +96,9 @@ public final class TabListManager {
             return;
         }
         Scoreboard scoreboard = server.getScoreboard();
-        PlayerTeam current = scoreboard.getPlayersTeam(player.getScoreboardName());
-        if (current != null && current.getName().startsWith(TabTeamNaming.TEAM_PREFIX)) {
-            scoreboard.removePlayerFromTeam(player.getScoreboardName(), current);
-            if (current.getPlayers().isEmpty()) {
-                scoreboard.removePlayerTeam(current);
-            }
-        }
+        String member = this.memberByPlayer.getOrDefault(player.getUUID(), player.getScoreboardName());
+        removeMember(scoreboard, member);
+        this.memberByPlayer.remove(player.getUUID());
     }
 
     /** Removes every managed team. Call on server stop. */
