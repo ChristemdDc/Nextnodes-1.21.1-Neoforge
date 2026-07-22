@@ -664,13 +664,14 @@ public final class NextNodesPermissions {
                 return; // ya instalado
             }
             var handler = new com.nextnodes.permissions.integration.DisguisePacketInterceptor(this.store);
+            // Los paquetes SALIENTES fluyen cola->cabeza: para ver el Packet ANTES de que 'encoder' lo
+            // convierta a bytes, el handler debe quedar en el lado de la cola del encoder -> addAfter.
             if (pipe.get("encoder") != null) {
-                pipe.addBefore("encoder", com.nextnodes.permissions.integration.DisguisePacketInterceptor.HANDLER_NAME, handler);
+                pipe.addAfter("encoder", com.nextnodes.permissions.integration.DisguisePacketInterceptor.HANDLER_NAME, handler);
             } else {
-                pipe.addFirst(com.nextnodes.permissions.integration.DisguisePacketInterceptor.HANDLER_NAME, handler);
+                pipe.addLast(com.nextnodes.permissions.integration.DisguisePacketInterceptor.HANDLER_NAME, handler);
             }
-            LOGGER.info("Interceptor de disfraz instalado para {} (handlers: {})",
-                    player.getGameProfile().getName(), pipe.names());
+            LOGGER.info("Interceptor de disfraz instalado para {}", player.getGameProfile().getName());
         } catch (Exception ex) {
             LOGGER.warn("No se pudo instalar el interceptor de disfraz para {}: {}",
                     player.getGameProfile().getName(), ex.toString());
