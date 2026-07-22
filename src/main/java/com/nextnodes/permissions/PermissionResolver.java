@@ -114,6 +114,20 @@ public final class PermissionResolver {
         return user.tag;
     }
 
+    /** The player's assigned catalog label text (after the name), or "" if none. Hidden while disguised. */
+    public String resolveLabel(UUID uuid) {
+        PermissionData data = this.store.snapshot();
+        UserEntry user = data.users.get(uuid.toString());
+        if (user == null || user.label == null || user.label.isBlank()) {
+            return "";
+        }
+        if (DisguiseResolver.displayRank(user, data.ranks) != null) {
+            return "";
+        }
+        var label = data.labels.get(user.label);
+        return label == null || label.text == null ? "" : label.text;
+    }
+
     public int resolveWeight(UUID uuid) {
         PermissionData data = this.store.snapshot();
         UserEntry user = data.users.get(uuid.toString());

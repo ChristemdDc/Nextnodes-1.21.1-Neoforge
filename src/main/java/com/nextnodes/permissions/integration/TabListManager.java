@@ -56,7 +56,8 @@ public final class TabListManager {
             team = scoreboard.addPlayerTeam(desiredName);
         }
         team.setPlayerPrefix(PrefixFormatter.format(this.resolver.resolvePrefix(uuid)));
-        team.setPlayerSuffix(buildSuffix(this.resolver.resolveSuffix(uuid), this.resolver.resolveTag(uuid)));
+        team.setPlayerSuffix(buildSuffix(this.resolver.resolveSuffix(uuid), this.resolver.resolveTag(uuid),
+                this.resolver.resolveLabel(uuid)));
         scoreboard.addPlayerToTeam(member, team);
         if (previous != null
                 && previous.getName().startsWith(TabTeamNaming.TEAM_PREFIX)
@@ -92,7 +93,7 @@ public final class TabListManager {
         }
     }
 
-    private static Component buildSuffix(String suffix, String tag) {
+    private static Component buildSuffix(String suffix, String tag, String label) {
         MutableComponent result = Component.empty();
         Component suffixComponent = PrefixFormatter.format(suffix);
         if (!suffixComponent.getString().isBlank()) {
@@ -103,6 +104,11 @@ public final class TabListManager {
         if (!tagComponent.getString().isBlank()) {
             result.append(Component.literal(" "));
             result.append(tagComponent);
+        }
+        Component labelComponent = PrefixFormatter.format(label);
+        if (!labelComponent.getString().isBlank()) {
+            result.append(Component.literal(" "));
+            result.append(labelComponent);
         }
         return result;
     }

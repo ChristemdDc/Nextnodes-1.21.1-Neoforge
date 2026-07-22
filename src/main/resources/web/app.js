@@ -72,6 +72,7 @@
         ranks: { admin: { name:'admin', displayName:'Admin', prefix:'&c[Admin] ', weight:100, parents:[], permissions:[{node:'command.gamemode',value:true,mode:'literal',contexts:{}},{node:'command.tp',value:true,mode:'literal',contexts:{}}], meta:{gradientStart:'#ff3d8b',gradientMiddle:'#7c4dff',gradientEnd:'#00e5ff'} }, vip: { name:'vip', displayName:'VIP', prefix:'&a[VIP] ', weight:50, parents:['default'], permissions:[{node:'command.fly',value:true,mode:'literal',contexts:{}}], meta:{gradientStart:'#00e676',gradientMiddle:'#00e5ff',gradientEnd:'#7c4dff'} }, default: { name:'default', displayName:'Jugador', prefix:'&7[Jugador] ', weight:0, parents:[], permissions:[], meta:{} } },
         commands: [ {name:'gamemode',permissionNode:'command.gamemode',source:'Minecraft Vanilla',paths:['gamemode survival','gamemode creative']}, {name:'tp',permissionNode:'command.tp',source:'Minecraft Vanilla',paths:['tp','teleport']}, {name:'fly',permissionNode:'command.fly',source:'Essentials',paths:['fly']}, {name:'heal',permissionNode:'command.heal',source:'Essentials',paths:['heal']}, {name:'give',permissionNode:'command.give',source:'Minecraft Vanilla',paths:['give']}, {name:'kick',permissionNode:'command.kick',source:'Minecraft Vanilla',paths:['kick']}, {name:'ban',permissionNode:'command.ban',source:'Minecraft Vanilla',paths:['ban']}, {name:'home',permissionNode:'command.home',source:'Essentials',paths:['home','sethome']} ],
         defaultRank: 'default',
+        labels: { vip_plus: { name:'vip_plus', text:'&b[VIP+]' } },
         tabSettings: { showPing: true },
         limitSettings: { enabled: false, max: 20, kickMessage: 'El servidor está lleno ({online}/{max}). Los rangos con acceso preferente entran igual.' }
       };
@@ -211,12 +212,31 @@
           <div class="sectionBody">${byWeight.map(bypassRankRow).join('') || '<div class="empty">No hay rangos definidos.</div>'}</div>
         </div>
         <div class="panel">
+          <div class="panelHead"><div><h2>Etiquetas</h2><div class="muted">Créalas una vez y asígnalas a jugadores (aparecen después del nombre) sin tocar el rango.</div></div></div>
+          <div class="sectionBody">
+            <div class="editorFields cols-2"><label>ID<input id="label_id" placeholder="vip_plus"></label><label>Texto (con &amp;códigos)<input id="label_text" placeholder="&b[VIP+]" oninput="syncLabelPreview()"></label></div>
+            <div class="prefixLive"><span class="prefixLabel">Vista previa</span><span class="prefixPreview" id="labelPreview"></span></div>
+            <div class="row" style="gap:8px"><button class="primary" onclick="saveLabel()">Guardar etiqueta</button></div>
+            <div class="stack">${Object.values(state.labels||{}).map(labelRow).join('') || '<div class="empty">Sin etiquetas. Crea una arriba.</div>'}</div>
+          </div>
+        </div>
+        <div class="panel">
           <div class="panelHead"><div><h2>Lista TAB</h2><div class="muted">Cómo se ve la lista de jugadores dentro del juego.</div></div></div>
           <div class="sectionBody">
             <div class="tabRow"><span class="tileIcon">${I_tab}</span><div style="flex:1;min-width:0"><div class="t-name">Mostrar ping</div><div class="t-sub">Ping como texto de color junto al nombre en el TAB del juego</div></div><label class="miniCheck" style="margin:0"><input type="checkbox" id="tabShowPing" ${(state.tabSettings||{}).showPing !== false ? 'checked' : ''} onchange="saveTabSettings()"></label></div>
           </div>
         </div>`;
     }
+    function labelRow(l){ return `<div class="tabRow"><span style="font-family:var(--mono);min-width:120px">${prefixHtml(l.text||'')}</span><div style="flex:1;min-width:0"><div class="t-sub">${escapeHtml(l.name)}</div></div><button onclick="editLabel('${escapeAttr(l.name)}')">Editar</button><button class="danger" onclick="deleteLabel('${escapeAttr(l.name)}')">Eliminar</button></div>`; }
+    function syncLabelPreview(){ const el=document.getElementById('labelPreview'); if(el) el.innerHTML=prefixHtml(document.getElementById('label_text')?.value||''); }
+    function editLabel(name){ const l=(state.labels||{})[name]; if(!l)return; document.getElementById('label_id').value=l.name; document.getElementById('label_text').value=l.text||''; syncLabelPreview(); }
+    async function saveLabel(){
+      const name=(document.getElementById('label_id')?.value||'').trim().toLowerCase();
+      const text=document.getElementById('label_text')?.value||'';
+      if(!name){ toast('Indica un ID para la etiqueta'); return; }
+      try { await api('/api/labels/'+encodeURIComponent(name), { method:'PUT', body:{ name, text } }); toast('Etiqueta guardada'); document.getElementById('label_id').value=''; document.getElementById('label_text').value=''; syncLabelPreview(); } catch(e){ toast('Error: '+e.message); }
+    }
+    async function deleteLabel(name){ if(!confirm('¿Eliminar la etiqueta '+name+'?'))return; try { await api('/api/labels/'+encodeURIComponent(name), { method:'DELETE' }); toast('Etiqueta eliminada'); } catch(e){ toast('Error: '+e.message); } }
     async function toggleRankBypass(name, checked) {
       // PUT reemplaza el rango entero: hay que enviar el objeto completo, no solo el flag.
       const rank=clone(state.ranks[name]); rank.bypassPlayerLimit=checked;
@@ -452,7 +472,7 @@
         <div class="editorSection"><div class="sectionHeader"><h3><span class="sectionIcon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span> Información del jugador</h3></div>
           <div class="sectionBody"><div class="editorFields cols-2"><label>Nombre<input id="user_name" value="${escapeAttr(u.name||'')}"></label><label>UUID<input id="user_uuid" value="${escapeAttr(u.uuid)}" readonly></label></div></div></div>
         <div class="editorSection"><div class="sectionHeader"><h3><span class="sectionIcon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></span> Rangos asignados</h3></div>
-          <div class="sectionBody"><div class="editorFields cols-2"><label>Rango primario<select id="user_primary">${Object.values(state.ranks||{}).map(r=>`<option value="${escapeAttr(r.name)}" ${u.primaryRank===r.name?'selected':''}>${escapeHtml(r.displayName||r.name)}</option>`).join('')}</select></label><label>Tag personal (después del sufijo)<input id="user_tag" value="${escapeAttr(u.tag||'')}" placeholder="[pepsi]"></label></div>
+          <div class="sectionBody"><div class="editorFields cols-2"><label>Rango primario<select id="user_primary">${Object.values(state.ranks||{}).map(r=>`<option value="${escapeAttr(r.name)}" ${u.primaryRank===r.name?'selected':''}>${escapeHtml(r.displayName||r.name)}</option>`).join('')}</select></label><label>Tag personal (después del sufijo)<input id="user_tag" value="${escapeAttr(u.tag||'')}" placeholder="[pepsi]"></label><label>Etiqueta (del catálogo)<select id="user_label"><option value="">(ninguna)</option>${Object.values(state.labels||{}).map(l=>`<option value="${escapeAttr(l.name)}" ${u.label===l.name?'selected':''}>${escapeHtml(l.name)}</option>`).join('')}</select></label></div>
           <div class="stack" id="user_rank_rows">${(u.ranks||[]).map(n=>userRankRowHtml(n,(u.rankExpiries||{})[n]||null)).join('') || '<div class="empty">Sin rangos asignados.</div>'}</div>
           <div class="row" style="gap:8px"><select id="user_rank_add">${options}</select><button onclick="addUserRankRow()">+ Añadir rango</button></div></div></div>
         <div class="editorSection"><div class="sectionHeader"><h3><span class="sectionIcon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></span> Disfraz (solo visual)</h3><span class="muted">TAB y chat</span></div>
@@ -493,7 +513,7 @@
       for(const row of rows){ const name=row.getAttribute('data-rank'); if(!name||ranks.includes(name))continue; ranks.push(name); const ms=rankExpiryOf(row); if(ms)rankExpiries[name]=ms; }
       const primary=document.getElementById('user_primary').value;
       if(primary && !ranks.includes(primary)) ranks.push(primary);
-      return {uuid:document.getElementById('user_uuid').value, name:document.getElementById('user_name').value, tag:document.getElementById('user_tag').value, primaryRank:primary, ranks, rankExpiries, permissions:[...userModalCommandRules(), ...readRules('user')], meta:readJsonBox('user_meta'), lastSeen:original.lastSeen||Date.now(), online:!!original.online, disguiseName:document.getElementById('user_disguise_name')?.value||'', disguiseRank:document.getElementById('user_disguise_rank')?.value||''};
+      return {uuid:document.getElementById('user_uuid').value, name:document.getElementById('user_name').value, tag:document.getElementById('user_tag').value, primaryRank:primary, ranks, rankExpiries, permissions:[...userModalCommandRules(), ...readRules('user')], meta:readJsonBox('user_meta'), lastSeen:original.lastSeen||Date.now(), online:!!original.online, disguiseName:document.getElementById('user_disguise_name')?.value||'', disguiseRank:document.getElementById('user_disguise_rank')?.value||'', label:document.getElementById('user_label')?.value||''};
     }
     // --- Filas de rango con tiempo (editor de jugador) ---
     function userRankRowHtml(name, expiryMs){

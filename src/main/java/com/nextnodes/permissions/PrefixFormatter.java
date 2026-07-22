@@ -20,7 +20,7 @@ public final class PrefixFormatter {
         return result;
     }
 
-    public static Component composeName(String prefix, String name, String suffix, String tag) {
+    public static Component composeName(String prefix, String name, String suffix, String tag, String label) {
         MutableComponent result = Component.empty();
         Component prefixComponent = format(prefix);
         if (!prefixComponent.getString().isBlank()) {
@@ -36,6 +36,11 @@ public final class PrefixFormatter {
         if (!tagComponent.getString().isBlank()) {
             result.append(Component.literal(" "));
             result.append(tagComponent);
+        }
+        Component labelComponent = format(label);
+        if (!labelComponent.getString().isBlank()) {
+            result.append(Component.literal(" "));
+            result.append(labelComponent);
         }
         return result;
     }

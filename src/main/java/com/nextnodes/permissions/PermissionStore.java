@@ -33,6 +33,7 @@ public final class PermissionStore {
 
     private static final String COL_RANKS    = "ranks";
     private static final String COL_USERS    = "users";
+    private static final String COL_LABELS   = "labels";
     private static final String COL_SETTINGS = "settings";
     private static final String COL_SYNC = "sync_events";
 
@@ -166,6 +167,55 @@ public final class PermissionStore {
         }
         fireChanged();
         publishEvent("rank", rank.name);
+    }
+
+    public void saveLabel(PermissionModels.Label label) throws IOException {
+        Objects.requireNonNull(label, "label");
+        this.lock.writeLock().lock();
+        try {
+            label.sanitize();
+            if (label.name.isBlank()) {
+                throw new IllegalArgumentException("label name is required");
+            }
+            try {
+                col(COL_LABELS).replaceOne(Filters.eq("_id", label.name),
+                        new Document("_id", label.name).append("text", label.text), UPSERT);
+                this.data.labels.put(label.name, label);
+                this.cachedSnapshot = null;
+            } catch (Exception ex) {
+                throw new IOException("Unable to save label", ex);
+            }
+        } finally {
+            this.lock.writeLock().unlock();
+        }
+        fireChanged();
+        publishEvent("label", label.name);
+    }
+
+    public void deleteLabel(String name) throws IOException {
+        String normalized = PermissionModels.normalizeName(name);
+        this.lock.writeLock().lock();
+        try {
+            try {
+                col(COL_LABELS).deleteOne(Filters.eq("_id", normalized));
+                this.data.labels.remove(normalized);
+                // Cascada: quitar la etiqueta de los usuarios que la tuvieran
+                MongoCollection<Document> usersCol = col(COL_USERS);
+                for (UserEntry user : this.data.users.values()) {
+                    if (normalized.equals(user.label)) {
+                        user.label = "";
+                        usersCol.replaceOne(Filters.eq("_id", user.uuid), userToDoc(user), UPSERT);
+                    }
+                }
+                this.cachedSnapshot = null;
+            } catch (Exception ex) {
+                throw new IOException("Unable to delete label", ex);
+            }
+        } finally {
+            this.lock.writeLock().unlock();
+        }
+        fireChanged();
+        publishEvent("label", normalized);
     }
 
     public void deleteRank(String name) throws IOException {
@@ -606,6 +656,15 @@ public final class PermissionStore {
             pd.ranks.put(rank.name, rank);
         }
 
+        // Labels (catálogo de etiquetas)
+        for (Document doc : col(COL_LABELS).find()) {
+            PermissionModels.Label label = new PermissionModels.Label();
+            label.name = doc.getString("_id");
+            label.text = doc.getString("text");
+            label.sanitize();
+            pd.labels.put(label.name, label);
+        }
+
         // Users
         for (Document doc : col(COL_USERS).find()) {
             UserEntry user = docToUser(doc);
@@ -776,7 +835,8 @@ public final class PermissionStore {
                 .append("lastSeen",    user.lastSeen)
                 .append("online",      user.online)
                 .append("disguiseName", user.disguiseName)
-                .append("disguiseRank", user.disguiseRank);
+                .append("disguiseRank", user.disguiseRank)
+                .append("label", user.label);
     }
 
     private static UserEntry docToUser(Document doc) {
@@ -790,6 +850,7 @@ public final class PermissionStore {
         user.online      = Boolean.TRUE.equals(doc.getBoolean("online"));
         user.disguiseName = doc.getString("disguiseName");
         user.disguiseRank = doc.getString("disguiseRank");
+        user.label = doc.getString("label");
 
         Document meta = doc.get("meta", Document.class);
         if (meta != null) {

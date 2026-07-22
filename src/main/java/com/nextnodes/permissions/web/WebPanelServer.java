@@ -331,6 +331,24 @@ public final class WebPanelServer implements AutoCloseable {
                 send(exchange, 200, "application/json; charset=utf-8", GSON.toJson(state));
                 return;
             }
+            if (path.startsWith("/api/labels/")) {
+                String name = decodeSegment(path.substring("/api/labels/".length()));
+                if (method.equals("PUT")) {
+                    PermissionModels.Label label = GSON.fromJson(readBody(exchange), PermissionModels.Label.class);
+                    if (label == null) { sendJson(exchange, 400, error("JSON inválido")); return; }
+                    if (label.name == null || label.name.isBlank()) { label.name = name; }
+                    this.store.saveLabel(label);
+                    if (this.auditLog != null) this.auditLog.log("web-panel", "web-panel", "label.save", "label", label.name, "");
+                    sendJson(exchange, 200, ok());
+                    return;
+                }
+                if (method.equals("DELETE")) {
+                    this.store.deleteLabel(name);
+                    if (this.auditLog != null) this.auditLog.log("web-panel", "web-panel", "label.delete", "label", name, "");
+                    sendJson(exchange, 200, ok());
+                    return;
+                }
+            }
             if (path.startsWith("/api/ranks/")) {
                 String name = decodeSegment(path.substring("/api/ranks/".length()));
                 if (method.equals("PUT")) {

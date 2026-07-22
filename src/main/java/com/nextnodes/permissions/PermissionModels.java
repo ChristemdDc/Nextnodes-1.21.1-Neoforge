@@ -14,6 +14,7 @@ public final class PermissionModels {
         public String defaultRank = "default";
         public Map<String, Rank> ranks = new LinkedHashMap<>();
         public Map<String, UserEntry> users = new LinkedHashMap<>();
+        public Map<String, Label> labels = new LinkedHashMap<>();
         public TabSettings tabSettings = new TabSettings();
         public LimitSettings limitSettings = new LimitSettings();
 
@@ -42,8 +43,25 @@ public final class PermissionModels {
                 rank.weight = 0;
                 return rank;
             });
+            if (this.labels == null) {
+                this.labels = new LinkedHashMap<>();
+            }
+            this.labels.values().forEach(Label::sanitize);
             this.ranks.values().forEach(Rank::sanitize);
             this.users.values().forEach(UserEntry::sanitize);
+        }
+    }
+
+    /** A reusable post-name label (badge) that can be assigned to a player without touching their rank. */
+    public static final class Label {
+        public String name = "";
+        public String text = "";
+
+        public void sanitize() {
+            this.name = normalizeName(this.name);
+            if (this.text == null) {
+                this.text = "";
+            }
         }
     }
 
@@ -115,6 +133,7 @@ public final class PermissionModels {
         public Map<String, Long> rankExpiries = new LinkedHashMap<>();
         public String disguiseName = "";
         public String disguiseRank = "";
+        public String label = "";
         public long lastSeen = 0L;
         public boolean online = false;
 
@@ -147,6 +166,7 @@ public final class PermissionModels {
                 this.disguiseName = "";
             }
             this.disguiseRank = normalizeName(this.disguiseRank);
+            this.label = normalizeName(this.label);
         }
     }
 

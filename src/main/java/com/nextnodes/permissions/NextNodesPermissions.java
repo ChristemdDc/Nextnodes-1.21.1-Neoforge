@@ -426,7 +426,8 @@ public final class NextNodesPermissions {
                 this.resolver.resolvePrefix(uuid),
                 shown,
                 this.resolver.resolveSuffix(uuid),
-                this.resolver.resolveTag(uuid));
+                this.resolver.resolveTag(uuid),
+                this.resolver.resolveLabel(uuid));
     }
 
     @net.neoforged.bus.api.SubscribeEvent
